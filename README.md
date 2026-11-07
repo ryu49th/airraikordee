@@ -11,5 +11,3 @@ CEDT Embedded Systems final project, due 8 Dec 2026.
 | `gateway/` | Jetson Nano software | |
 | `dashboard/` | web dashboard (Firebase) | |
 | `docs/` | protocol, diagrams, test results, report | |
-
-Shared contract between all parts: `docs/protocol.md`. Change it only in a PR the whole team sees.
