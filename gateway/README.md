@@ -24,6 +24,15 @@ sudo cp .env.example /etc/airraikordee/.env    # then fill in the real values
 sudo cp udev/99-airraikordee.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
 ```
 
+## MQTT broker (port 1884)
+The gateway uses its own Mosquitto on **port 1884**, run as user `eiclite` without sudo
+(the system broker on 1883 has a login the team does not know):
+- config, password file, data and log in `~/airraikordee-mqtt/` (`mosquitto.conf`, `passwd`, `mosquitto.log`)
+- login: user `gateway`; the password is only in `gateway/.env` (`MQTT_USER`, `MQTT_PASS`, `MQTT_PORT=1884`)
+- started by the user crontab: `@reboot` and a watchdog every minute (`crontab -l | grep airraikordee-mqtt`)
+- Node 2 (Wi-Fi) must connect to the Jetson's IP on port 1884 with the same login
+- add a user: `mosquitto_passwd ~/airraikordee-mqtt/passwd <name>` then `kill -HUP $(cat ~/airraikordee-mqtt/mosquitto.pid)`
+
 ## Run (from this folder)
 ```bash
 python3 -m bridge.uart_bridge
