@@ -26,8 +26,9 @@ def _new_client(client_id):
 class MqttClient(object):
     def __init__(self, client_id, cfg):
         m = cfg.get("mqtt", {})
-        self.host = m.get("host", "127.0.0.1")
-        self.port = int(m.get("port", 1883))
+        # .env (MQTT_HOST / MQTT_PORT) wins over config.yaml, same as the simulators in tools/
+        self.host = os.environ.get("MQTT_HOST") or m.get("host", "127.0.0.1")
+        self.port = int(os.environ.get("MQTT_PORT") or m.get("port", 1884))
         self.keepalive = int(m.get("keepalive", 30))
         self.connected = threading.Event()
         self._handlers = []  # (topic filter, handler, qos)

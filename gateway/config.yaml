@@ -3,7 +3,7 @@
 
 mqtt:
   host: 127.0.0.1
-  port: 1883
+  port: 1884                        # the team's broker (user-level Mosquitto, ~/airraikordee-mqtt); MQTT_PORT in .env wins
   keepalive: 30
 
 logging:
