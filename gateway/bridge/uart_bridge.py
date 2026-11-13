@@ -77,23 +77,22 @@ class UartBridge(object):
     # --- serial side -------------------------------------------------------------------------------
 
     def _serial_loop(self):
-        alerted_down = False
+        down_logged = False
         while not self._stop.is_set():
             try:
                 ser = self._open_serial()
             except Exception as e:
-                if not alerted_down:
+                if not down_logged:
                     log.warning("cannot open %s: %s (retrying every %.1f s)", self.device, e, self.reconnect_s)
-                    self._alert("node1_disconnected", str(e))
-                    alerted_down = True
+                    down_logged = True
                 self._stop.wait(self.reconnect_s)
                 continue
 
             with self._ser_lock:
                 self._ser = ser
-            if alerted_down:
+            if down_logged:
                 self.stats["reconnects"] += 1
-            alerted_down = False
+            down_logged = False
             self.connected.set()
             log.info("serial %s open", self.device)
             try:
@@ -101,8 +100,7 @@ class UartBridge(object):
             except Exception as e:
                 if not self._stop.is_set():
                     log.warning("serial %s lost: %s", self.device, e)
-                    self._alert("node1_disconnected", str(e))
-                    alerted_down = True
+                    down_logged = True
             finally:
                 self.connected.clear()
                 self._close_serial()
@@ -237,7 +235,9 @@ class UartBridge(object):
                 self._acks.pop(seq, None)
         self.stats["cmd_failed"] += 1
         log.warning("node1 did not ack %s seq %d", cmd, seq)
-        self._alert("node1_no_ack", "%s seq %d" % (cmd, seq))
+        self.mqtt.publish(TOPIC_GW_ALERT, {
+            "ts": now_ts(), "source": "uart_bridge", "type": "uart_fail", "severity": "warn",
+            "msg": "Node 1 ไม่ตอบคำสั่ง %s หลังส่งซ้ำ %d ครั้ง" % (cmd, self.retries)})
         return False
 
     def _resolve_ack(self, seq):
@@ -245,10 +245,6 @@ class UartBridge(object):
             event = self._acks.get(seq)
         if event is not None:
             event.set()
-
-    def _alert(self, kind, detail):
-        self.mqtt.publish(TOPIC_GW_ALERT, {"ts": now_ts(), "source": "uart_bridge", "type": kind,
-                                           "detail": detail})
 
 
 def main():

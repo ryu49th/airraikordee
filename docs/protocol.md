@@ -165,3 +165,10 @@ The dashboard needs these. They add to the MQTT table above, they do not change 
 7. **`ab/gw/ui_cmd`**: uploader publishes each `ui_cmd` record; `decision.py` / `health.py` act on it.
 8. **`ab/node2/cmd` + optional `field_test`, `reset_fault`**: e.g. `{seq, ts, charge_allowed, reason, field_test: true}` or `{seq, ts, charge_allowed, reason, reset_fault: true}`, so the web settings and buttons reach the box.
 
+9. **`ab/gw/alert`**: one-off alerts from modules that are not the brain, payload = the alert record
+   `{ts, type, severity, msg, source}`. The uploader writes each one to `alerts/{key}`. Today only `uart_bridge`
+   uses it (`uart_fail` after 3 retries), so `decision.py` should not also add `uart_fail` to `state.alerts`.
+10. **`ab/gw/uploader`**: `{ts, outbox_pending, last_upload_ts, last_error}` every 10 s, for `health.py`.
+11. **UART heartbeat line** = `{"cmd":"hb","ts":..}` every 500 ms, no ACK. Every other command line carries the
+    bridge's own `seq`, and Node 1 answers `{"ack":<seq>}`. The bridge then publishes `ab/node1/ack {ack_seq}`
+    with the seq the MQTT sender used.

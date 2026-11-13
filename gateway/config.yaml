@@ -31,19 +31,17 @@ uploader:
   max_rows: 500000                  # oldest rows are dropped past this so the SD card never fills up
   stats_every_s: 10
   timeout_s: 10
-  # Firebase paths are provisional until AIR-5 (DB-01) is agreed with the dashboard.
-  # Every message overwrites <path>/latest; history rows go to <path>/history/<ms>_<id>.
-  # every_s: drop messages that arrive faster than this (0 = keep all).
-  # history_every_s: append to history at most this often (0 = every message kept).
-  routes:
-    - {topic: ab/node1/telemetry, path: telemetry/node1, history: true, every_s: 0, history_every_s: 5}
-    - {topic: ab/node2/telemetry, path: telemetry/node2, history: true, every_s: 0, history_every_s: 5}
-    - {topic: ab/gw/env,          path: env,             history: true, every_s: 0, history_every_s: 10}
-    - {topic: ab/gw/state,        path: state,           history: true, every_s: 1, history_every_s: 10}
-    - {topic: ab/gw/cause,        path: cause,           history: true, every_s: 0, history_every_s: 0}
-    - {topic: ab/gw/alert,        path: alerts,          history: true, every_s: 0, history_every_s: 0}
-    - {topic: ab/gw/vision,       path: vision,          history: false, every_s: 1, history_every_s: 0}
-    - {topic: ab/gw/health,       path: health,          history: false, every_s: 0, history_every_s: 0}
+  # Firebase paths and records: docs/protocol.md "Firebase Realtime Database".
+  rates_s:                          # overwrite paths are written at most this often
+    telemetry/node1: 5
+    telemetry/node2: 5
+    env: 5
+    state: 5
+    health: 30
+  history:                          # averages for the dashboard charts
+    m1:  {bucket_s: 60,  keep_s: 172800}     # 48 h
+    m15: {bucket_s: 900, keep_s: 2592000}    # 30 days
+  retention_every_s: 86400          # delete old history keys once a day
 
 # --- brain/decision.py (spec section 4) ---
 decision:

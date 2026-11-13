@@ -145,7 +145,8 @@ def test_no_ack_after_retries_raises_alert(make_bridge):
     mqtt.deliver(TOPIC_NODE1_CMD, {"seq": 1, "cmd": "stop"})
     assert wait_for(lambda: mqtt.on(TOPIC_GW_ALERT))
     assert len(ser.commands()) == 4                   # first try + 3 retries
-    assert mqtt.on(TOPIC_GW_ALERT)[0]["type"] == "node1_no_ack"
+    alert = mqtt.on(TOPIC_GW_ALERT)[0]
+    assert alert["type"] == "uart_fail" and alert["severity"] == "warn" and "stop" in alert["msg"]
 
 
 def test_heartbeat_is_sent(make_bridge):
@@ -164,8 +165,7 @@ def test_reconnects_after_unplug(make_bridge):
     assert wait_for(lambda: second.written)            # reopened the port and heartbeats again
     second.rx.put(b'{"node_id":"node1","seq":5,"ts":5,"pm25":30}\n')
     assert wait_for(lambda: mqtt.on(TOPIC_NODE1_TELEMETRY))
-    kinds = [a["type"] for a in mqtt.on(TOPIC_GW_ALERT)]
-    assert kinds == ["node1_disconnected", "node1_disconnected"]
+    assert not mqtt.on(TOPIC_GW_ALERT)                # node_offline is health.py's job, not the bridge's
     assert first.closed
     assert bridge.stats["reconnects"] == 2
 
