@@ -54,7 +54,10 @@ ALERT_TITLES = {
 
 
 def pick(msg, fields):
-    return dict((k, msg[k]) for k in fields if k in msg)
+    record = dict((k, msg[k]) for k in fields if k in msg)
+    if isinstance(record.get("ts"), float):
+        record["ts"] = int(record["ts"])  # the contract uses whole unix seconds
+    return record
 
 
 class Outbox(object):
