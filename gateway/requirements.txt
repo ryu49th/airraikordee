@@ -1,0 +1,7 @@
+# Pinned for Python 3.6 (JetPack 4.6 / Ubuntu 18.04).
+# jetson-inference (detectNet) is built from source on the Jetson, not installed from pip.
+paho-mqtt==1.6.1
+pyserial==3.5
+PyYAML==5.4.1
+requests==2.27.1
+pytest==7.0.1

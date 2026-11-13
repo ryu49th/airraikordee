@@ -4,6 +4,10 @@
 # runtime data
 *.db
 gateway/snapshots/
+gateway/logs/
+gateway/data/
+*.db-wal
+*.db-shm
 # build output
 .pio/
 build/

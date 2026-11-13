@@ -1,0 +1,83 @@
+# AirRaiKorDee gateway settings (Jetson Nano).
+# No secrets here: passwords, tokens and API keys live in /etc/airraikordee/.env (copy .env.example).
+
+mqtt:
+  host: 127.0.0.1
+  port: 1883
+  keepalive: 30
+
+logging:
+  level: INFO
+  dir: /var/log/airraikordee        # falls back to gateway/logs/ when not writable (laptop)
+
+data_dir: /var/lib/airraikordee     # SQLite + snapshots; falls back to gateway/data/
+
+# --- Node 1 (ESP32-S3) over USB serial: bridge/uart_bridge.py ---
+node1:
+  device: /dev/airraikordee-node1   # udev symlink (udev/99-airraikordee.rules); use /dev/ttyACM0 without it
+  baud: 115200
+  ack_timeout_s: 0.3                # Node 1 must answer {"ack": seq} within this
+  retries: 3                        # resends after the first try, then an alert
+  heartbeat_s: 0.5                  # Node 1 stops the servos after 2 s without a command/heartbeat
+  reconnect_s: 1.0
+
+# --- Firebase store-and-forward: cloud/uploader.py ---
+uploader:
+  db_file: outbox.db                # inside data_dir
+  batch_size: 200
+  poll_s: 1.0
+  backoff_min_s: 1
+  backoff_max_s: 300
+  max_rows: 500000                  # oldest rows are dropped past this so the SD card never fills up
+  stats_every_s: 10
+  timeout_s: 10
+  # Firebase paths are provisional until AIR-5 (DB-01) is agreed with the dashboard.
+  # Every message overwrites <path>/latest; history rows go to <path>/history/<ms>_<id>.
+  # every_s: drop messages that arrive faster than this (0 = keep all).
+  # history_every_s: append to history at most this often (0 = every message kept).
+  routes:
+    - {topic: ab/node1/telemetry, path: telemetry/node1, history: true, every_s: 0, history_every_s: 5}
+    - {topic: ab/node2/telemetry, path: telemetry/node2, history: true, every_s: 0, history_every_s: 5}
+    - {topic: ab/gw/env,          path: env,             history: true, every_s: 0, history_every_s: 10}
+    - {topic: ab/gw/state,        path: state,           history: true, every_s: 1, history_every_s: 10}
+    - {topic: ab/gw/cause,        path: cause,           history: true, every_s: 0, history_every_s: 0}
+    - {topic: ab/gw/alert,        path: alerts,          history: true, every_s: 0, history_every_s: 0}
+    - {topic: ab/gw/vision,       path: vision,          history: false, every_s: 1, history_every_s: 0}
+    - {topic: ab/gw/health,       path: health,          history: false, every_s: 0, history_every_s: 0}
+
+# --- brain/decision.py (spec section 4) ---
+decision:
+  humidity_k: 0.5                   # pm25_corrected = pm25 / (1 + k * max(0, rh - 60) / 40); calibrate later
+  fan_table:                        # [pm25_corrected upper bound, fan %]
+    - [15, 25]
+    - [35, 45]
+    - [55, 70]
+    - [100000, 100]
+  night_start: "22:00"
+  night_end: "06:00"
+  night_fan_max: 35
+  idle_after_s: 600
+  aim_deadband_deg: 3
+  aim_max_step_deg: 10
+  charge_person_window_s: 900
+  charge_max_temp_c: 45
+
+# --- vision/vision.py ---
+vision:
+  width: 640
+  height: 480
+  fps: 10
+  hfov_deg: 60                      # MEASURE the real webcam
+  vfov_deg: 45
+  publish_hz: 5
+  snapshot_keep: 200
+
+# --- ai/cause_rules.py, ai/cause_cloud.py ---
+cause:
+  spike_ugm3: 15
+  spike_window_s: 300
+  humidity_rise_pct: 5
+  cloud_min_confidence: 0.8
+  cloud_min_interval_s: 600
+  cloud_timeout_s: 10
+  outdoor_pm_url: ""
