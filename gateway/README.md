@@ -6,7 +6,7 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 |---|---|---|
 | `common/` | `config.py` (config.yaml + .env), `protocol.py` (topics, JSON, seq), `mqtt_client.py`, `logging_setup.py`, `service.py` | done |
 | `bridge/uart_bridge.py` | Node 1 USB serial <-> MQTT, ACK/retry, heartbeat, auto-reconnect | done |
-| `cloud/uploader.py` | MQTT -> SQLite outbox -> Firebase REST, backoff (E4), paths from `docs/protocol.md` | done (uplink) |
+| `cloud/uploader.py` | MQTT -> SQLite outbox -> Firebase REST under `devices/<id>`, device-account login, backoff (E4) | done (uplink) |
 | `tools/sim_node1.py`, `tools/sim_node2.py` | fake nodes, see below | done |
 | `sensors/ vision/ ai/ voice/ brain/ notify/ health/` | other modules | todo |
 | `udev/99-airraikordee.rules` | stable `/dev/airraikordee-node1` name for Node 1 | done |
@@ -38,11 +38,13 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
 - When Node 1 ACKs, the bridge publishes `ab/node1/ack {ack_seq}` with the seq the sender used on MQTT.
 
 ## Firebase (uploader)
-Paths and records follow `docs/protocol.md` → "Firebase Realtime Database". `node_id` / `seq` are dropped,
-`telemetry/*`, `env`, `state` are overwritten at most every 5 s, `health` every 30 s, `cause/latest` +
-`cause/history/{id}` and `alerts/{key}` on every event, and `history/m1` / `history/m15` hold 1-min / 15-min
-averages (old keys deleted once a day). The REST call uses `?auth=FIREBASE_TOKEN` from `.env`.
-Not done yet: reading `config`, `ui_cmd`, `feedback` back down (AIR-97).
+Paths and fields follow Farn's data contract (`docs/protocol.md` → "Firebase Realtime Database").
+Everything goes under `devices/<DEVICE_ID>/` with one PATCH per batch. The Jetson signs in as
+`device-<DEVICE_ID>@devices.airraikordee.example`, so `.env` needs `FIREBASE_DB_URL`, `FIREBASE_API_KEY`,
+`DEVICE_ID` and `DEVICE_PASSWORD` (the password comes from Farn privately, never in Git).
+`*/latest` and `state` are overwritten at most every second, `history/node1/<minute>` gets one averaged row per
+minute, `health` every 30 s, `cause/latest` and `alerts/<id>` on every event.
+Not done here: reading `config` back down (AIR-97).
 
 ## Simulators (no hardware needed)
 

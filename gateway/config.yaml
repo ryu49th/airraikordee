@@ -31,17 +31,15 @@ uploader:
   max_rows: 500000                  # oldest rows are dropped past this so the SD card never fills up
   stats_every_s: 10
   timeout_s: 10
-  # Firebase paths and records: docs/protocol.md "Firebase Realtime Database".
-  rates_s:                          # overwrite paths are written at most this often
-    telemetry/node1: 5
-    telemetry/node2: 5
-    env: 5
-    state: 5
-    health: 30
-  history:                          # averages for the dashboard charts
-    m1:  {bucket_s: 60,  keep_s: 172800}     # 48 h
-    m15: {bucket_s: 900, keep_s: 2592000}    # 30 days
-  retention_every_s: 86400          # delete old history keys once a day
+  # Firebase paths and fields: docs/protocol.md "Firebase Realtime Database" (Farn's data contract).
+  # Everything goes under devices/<DEVICE_ID>/; the device account and password are in .env.
+  rates_s:                          # "latest" paths are overwritten at most this often
+    telemetry/node1/latest: 1
+    telemetry/node2/latest: 1
+    env/latest: 1
+    state: 1
+  health_every_s: 30
+  node_offline_s: 30                # node*_online = false after this long without telemetry
 
 # --- brain/decision.py (spec section 4) ---
 decision:

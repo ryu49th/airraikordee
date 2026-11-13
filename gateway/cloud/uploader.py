@@ -1,16 +1,20 @@
 """Store-and-forward upload of MQTT data to Firebase Realtime Database (E4).
 
 Every record is written to a SQLite `outbox` on disk first. A worker sends the oldest rows in one multi-path
-PATCH over HTTPS and deletes them only after HTTP 200; on failure it waits with exponential backoff
-(1 s -> 5 min). Nothing is lost while the internet is down or the service restarts.
+PATCH to devices/<deviceId> over HTTPS and deletes them only after HTTP 200; on failure it waits with
+exponential backoff (1 s -> 5 min). Nothing is lost while the internet is down or the service restarts.
 
-Firebase paths and records follow docs/protocol.md ("Firebase Realtime Database"):
-  telemetry/node1, telemetry/node2, env, state   overwrite, at most every rates_s (5 s)
-  health                                          overwrite, every 30 s
-  cause/latest, cause/history/{id}                every result
-  alerts/{key}                                    each new item in state.alerts, and each ab/gw/alert
-  history/m1/{ts}, history/m15/{ts}               1-min / 15-min averages, old keys deleted once a day
-Payloads are the MQTT payloads without node_id and seq.
+Paths and fields follow the Firebase data contract (docs/protocol.md, "Firebase Realtime Database"):
+  telemetry/node1/latest   node1 telemetry + pm25_corrected/fan_pct/mode from state + person from vision
+  telemetry/node2/latest   node2 telemetry + batt_temp_c from node1
+  env/latest               BME280
+  history/node1/<minute>   one row per minute (averages), key = unix seconds at the start of the minute
+  state                    mode, fan_pct, target, alerts
+  cause/latest             latest dust cause
+  alerts/<key>             each new item in state.alerts, and each ab/gw/alert
+  health                   every 30 s, with pending_rows and last_upload_ts from this uploader
+The Jetson signs in with its device account (device-<deviceId>@devices.airraikordee.example) and refreshes
+the 1-hour ID token before it expires, or after an HTTP 401.
 
 Run on the Jetson from gateway/:  python3 -m cloud.uploader
 """
@@ -23,32 +27,38 @@ import threading
 import time
 
 from common.protocol import (TOPIC_GW_ALERT, TOPIC_GW_CAUSE, TOPIC_GW_ENV, TOPIC_GW_HEALTH, TOPIC_GW_STATE,
-                             TOPIC_GW_UPLOADER, TOPIC_NODE1_TELEMETRY, TOPIC_NODE2_TELEMETRY, clean_json, encode,
-                             now_ts)
+                             TOPIC_GW_UPLOADER, TOPIC_GW_VISION, TOPIC_NODE1_TELEMETRY, TOPIC_NODE2_TELEMETRY,
+                             clean_json, encode, now_ts)
 
 log = logging.getLogger("uploader")
 
-# MQTT topic -> Firebase path for the records that are simply overwritten.
-OVERWRITE = {
-    TOPIC_NODE1_TELEMETRY: "telemetry/node1",
-    TOPIC_NODE2_TELEMETRY: "telemetry/node2",
-    TOPIC_GW_ENV: "env",
-    TOPIC_GW_STATE: "state",
-    TOPIC_GW_HEALTH: "health",
+# Field lists from the contract. Anything else in an MQTT message stays on the Jetson.
+NODE1_FIELDS = ("ts", "pm25", "pm25_corrected", "pm10", "fan_pct", "fan_rpm", "pan_deg", "tilt_deg", "person",
+                "mode")
+NODE2_FIELDS = ("ts", "mode", "voltage", "current_a", "temp_c", "batt_temp_c", "plugged", "est_percent")
+ENV_FIELDS = ("ts", "temp_c", "rh", "pressure_hpa")
+HISTORY_FIELDS = ("pm25", "temp_c", "rh", "fan_pct")
+STATE_FIELDS = ("mode", "fan_pct", "target", "alerts")
+CAUSE_FIELDS = ("ts", "cause", "confidence", "source", "advice_th")
+ALERT_FIELDS = ("ts", "level", "title", "text", "sent_to")
+HEALTH_FIELDS = ("node1_online", "node2_online", "cpu_temp_c", "pending_rows", "last_upload_ts", "filter_hours",
+                 "pms_hours")
+
+DEFAULT_RATES = {"telemetry/node1/latest": 1, "telemetry/node2/latest": 1, "env/latest": 1, "state": 1}
+ALERT_TITLES = {
+    "pm25_high": "PM2.5 สูง", "pm_high": "PM2.5 สูง", "node_offline": "อุปกรณ์ออฟไลน์",
+    "uart_fail": "Node 1 ไม่ตอบคำสั่ง", "charge_cut_temp": "หยุดชาร์จเพราะร้อนเกิน", "charge_fault": "ที่ชาร์จขัดข้อง",
+    "battery_low": "แบตเตอรี่ต่ำ", "charge_full": "ชาร์จเต็มแล้ว", "filter_clogged": "ไส้กรองอุดตัน",
+    "stop_pressed": "กดปุ่มหยุด",
 }
-DEFAULT_RATES = {"telemetry/node1": 5, "telemetry/node2": 5, "env": 5, "state": 5, "health": 30}
-# Which field of which topic feeds the history charts.
-HISTORY_FIELDS = {
-    TOPIC_NODE1_TELEMETRY: ("pm25",),
-    TOPIC_GW_STATE: ("pm25_corrected", "fan_pct"),
-    TOPIC_GW_ENV: ("temp_c", "rh"),
-}
-DEFAULT_HISTORY = {"m1": {"bucket_s": 60, "keep_s": 48 * 3600}, "m15": {"bucket_s": 900, "keep_s": 30 * 86400}}
-ALERT_FIELDS = ("ts", "type", "severity", "msg", "discord_sent")
+
+
+def pick(msg, fields):
+    return dict((k, msg[k]) for k in fields if k in msg)
 
 
 class Outbox(object):
-    """SQLite queue of (Firebase path, JSON) waiting for upload. Safe to use from the MQTT and worker threads."""
+    """SQLite queue of (path under devices/<id>, JSON) waiting for upload. Thread-safe."""
 
     def __init__(self, path, max_rows=500000):
         self.max_rows = max_rows
@@ -105,74 +115,135 @@ class Outbox(object):
             self._db.close()
 
 
-class FirebaseRest(object):
-    """Minimal Realtime Database REST client."""
+class DeviceAuth(object):
+    """Firebase Auth (email/password) for the device account; keeps a fresh ID token."""
 
-    def __init__(self, db_url, token="", timeout=10.0):
-        import requests
-        self._requests = requests
-        self._session = requests.Session()
-        self.base = db_url.rstrip("/")
-        self.token = token
+    SIGN_IN = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
+    REFRESH = "https://securetoken.googleapis.com/v1/token"
+
+    def __init__(self, api_key, email, password, session, timeout=10.0, clock=time.time):
+        self.api_key = api_key
+        self.email = email
+        self.password = password
+        self.session = session
+        self.timeout = timeout
+        self.clock = clock
+        self._id_token = None
+        self._refresh_token = None
+        self._expires_at = 0.0
+        self._lock = threading.Lock()
+
+    def token(self):
+        """A valid ID token, or None if signing in failed (the caller backs off and tries again)."""
+        with self._lock:
+            if self._id_token and self.clock() < self._expires_at - 300:
+                return self._id_token
+            if self._refresh_token and self._refresh():
+                return self._id_token
+            self._sign_in()
+            return self._id_token
+
+    def invalidate(self):
+        """Called after an HTTP 401: the next token() refreshes."""
+        with self._lock:
+            self._expires_at = 0.0
+
+    def _sign_in(self):
+        self._id_token = None
+        try:
+            r = self.session.post(self.SIGN_IN, params={"key": self.api_key}, timeout=self.timeout,
+                                  json={"email": self.email, "password": self.password, "returnSecureToken": True})
+            body = r.json()
+        except Exception as e:
+            log.warning("device sign-in failed: %s", e)
+            return False
+        if r.status_code != 200:
+            log.error("device sign-in refused for %s: %s", self.email, body.get("error", {}).get("message", body))
+            return False
+        self._store(body["idToken"], body["refreshToken"], body.get("expiresIn", 3600))
+        log.info("signed in as %s", self.email)
+        return True
+
+    def _refresh(self):
+        try:
+            r = self.session.post(self.REFRESH, params={"key": self.api_key}, timeout=self.timeout,
+                                  data={"grant_type": "refresh_token", "refresh_token": self._refresh_token})
+            body = r.json()
+        except Exception as e:
+            log.warning("token refresh failed: %s", e)
+            return False
+        if r.status_code != 200:
+            log.warning("token refresh refused (%s), signing in again", body.get("error", {}).get("message", body))
+            self._refresh_token = None
+            return False
+        self._store(body["id_token"], body["refresh_token"], body.get("expires_in", 3600))
+        return True
+
+    def _store(self, id_token, refresh_token, expires_in):
+        self._id_token = id_token
+        self._refresh_token = refresh_token
+        self._expires_at = self.clock() + float(expires_in)
+
+
+class FirebaseRest(object):
+    """Realtime Database REST client rooted at devices/<deviceId>."""
+
+    def __init__(self, db_url, device_id, auth=None, session=None, timeout=10.0):
+        if session is None:
+            import requests
+            session = requests.Session()
+        self.session = session
+        self.url = "%s/devices/%s.json" % (db_url.rstrip("/"), device_id)
+        self.auth = auth
         self.timeout = timeout
 
-    def _call(self, method, path, params=None, data=None):
-        """Returns (status_code, body). Network errors return (None, error text)."""
-        params = dict(params or {})
-        if self.token:
-            params["auth"] = self.token
-        try:
-            r = self._session.request(method, "%s/%s.json" % (self.base, path), params=params or None, data=data,
-                                      timeout=self.timeout, headers={"Content-Type": "application/json"})
-        except self._requests.RequestException as e:
-            return None, str(e)
-        return r.status_code, r.text
-
     def patch(self, updates):
-        """One multi-path update at the root. A None value deletes that path."""
+        """One multi-path update under devices/<id>. Returns (status_code, body); (None, text) on errors."""
         data = json.dumps(updates, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
-        status, body = self._call("PATCH", "", data=data)
-        return status, body[:300]
-
-    def shallow_keys(self, path):
-        """Child keys of `path` (without their data), or None on error."""
-        status, body = self._call("GET", path, params={"shallow": "true"})
-        if status != 200:
-            return None
-        return list((json.loads(body) or {}).keys())
+        for attempt in (1, 2):
+            params = None
+            if self.auth is not None:
+                token = self.auth.token()
+                if token is None:
+                    return None, "device sign-in failed"
+                params = {"auth": token}
+            try:
+                r = self.session.patch(self.url, params=params, data=data, timeout=self.timeout,
+                                       headers={"Content-Type": "application/json"})
+            except Exception as e:
+                return None, str(e)
+            if r.status_code == 401 and self.auth is not None and attempt == 1:
+                self.auth.invalidate()  # token expired early or was revoked: refresh once and retry
+                continue
+            return r.status_code, r.text[:300]
 
 
 def build_updates(rows):
-    """Rows (oldest first) -> one Firebase multi-path update. A later row for the same path wins."""
+    """Rows (oldest first) -> one multi-path update. A later row for the same path wins."""
     updates = {}
     for _, path, _, payload in rows:
         updates[path] = json.loads(payload)
     return updates
 
 
-def strip_ids(msg):
-    return dict((k, v) for k, v in msg.items() if k not in ("node_id", "seq"))
+class MinuteHistory(object):
+    """Averages over one minute -> history/node1/<minute start>."""
 
-
-class Buckets(object):
-    """Averages of a few fields over fixed time buckets (history/m1, history/m15)."""
-
-    def __init__(self, bucket_s):
-        self.bucket_s = int(bucket_s)
-        self.start = None
+    def __init__(self):
+        self.minute = None
         self._closed_before = 0
         self._sums = {}
         self._counts = {}
+        self._last_ts = None
 
     def add(self, ts, values):
-        """Add values seen at ts. Returns a finished (key, record) when ts opens a new bucket, else None."""
-        start = int(ts) // self.bucket_s * self.bucket_s
-        done = None
-        if start < self._closed_before or (self.start is not None and start < self.start):
-            return None  # late record for a bucket that is already closed
-        if self.start is not None and start > self.start:
-            done = self._finish()
-        self.start = start
+        """Returns a finished (minute, record) when ts starts a new minute, else None."""
+        minute = int(ts) - int(ts) % 60
+        if minute < self._closed_before or (self.minute is not None and minute < self.minute):
+            return None  # late record for a minute that is already written
+        done = self._finish() if self.minute is not None and minute > self.minute else None
+        self.minute = minute
+        self._last_ts = ts
         for name, value in values.items():
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 self._sums[name] = self._sums.get(name, 0.0) + value
@@ -180,19 +251,22 @@ class Buckets(object):
         return done
 
     def flush(self, now):
-        """Close the open bucket once its time is over (so the chart does not wait for the next message)."""
-        if self.start is not None and now >= self.start + self.bucket_s:
+        """Write the open minute once it is over, so the chart does not wait for the next message."""
+        if self.minute is not None and now >= self.minute + 60:
             done = self._finish()
-            self.start = None
+            self.minute = None
             return done
         return None
 
     def _finish(self):
         record = dict((name, round(self._sums[name] / self._counts[name], 2)) for name in self._sums)
-        key = "%010d" % self.start
-        self._closed_before = self.start + self.bucket_s
+        minute = self.minute
+        self._closed_before = minute + 60
         self._sums, self._counts = {}, {}
-        return (key, record) if record else None
+        if not record:
+            return None
+        record["ts"] = int(self._last_ts)
+        return minute, record
 
 
 class Uploader(object):
@@ -203,12 +277,10 @@ class Uploader(object):
         self.backoff_min = float(u.get("backoff_min_s", 1))
         self.backoff_max = float(u.get("backoff_max_s", 300))
         self.stats_every_s = float(u.get("stats_every_s", 10))
-        self.retention_every_s = float(u.get("retention_every_s", 86400))
+        self.health_every_s = float(u.get("health_every_s", 30))
+        self.node_offline_s = float(u.get("node_offline_s", 30))
         self.rates = dict(DEFAULT_RATES)
         self.rates.update(u.get("rates_s") or {})
-        history = u.get("history") or DEFAULT_HISTORY
-        self.history = dict((name, Buckets(h["bucket_s"])) for name, h in history.items())
-        self.keep_s = dict((name, float(h["keep_s"])) for name, h in history.items())
 
         self.mqtt = mqtt_client
         self.outbox = outbox
@@ -218,16 +290,23 @@ class Uploader(object):
         self._stop = threading.Event()
         self._thread = None
         self._last_sent = {}
+        self._node1 = {}       # merged telemetry/node1/latest
+        self._node2 = {}
+        self._health = {}      # last ab/gw/health from health.py
+        self._last_seen = {}   # node -> clock() of last telemetry
         self._active_alerts = set()
         self._alert_n = 0
+        self._history = MinuteHistory()
+        self._history_values = {}
         self._backoff = self.backoff_min
         self._batch_cap = self.batch_size
         self._last_stats = 0.0
-        self._last_retention = None
+        self._last_health = 0.0
         self.stats = {"queued": 0, "sent": 0, "dead": 0, "failures": 0, "last_ok_ts": None, "last_error": None}
 
     def start(self):
-        for topic in list(OVERWRITE) + [TOPIC_GW_CAUSE, TOPIC_GW_ALERT]:
+        for topic in (TOPIC_NODE1_TELEMETRY, TOPIC_NODE2_TELEMETRY, TOPIC_GW_ENV, TOPIC_GW_STATE, TOPIC_GW_VISION,
+                      TOPIC_GW_CAUSE, TOPIC_GW_ALERT, TOPIC_GW_HEALTH):
             self.mqtt.subscribe(topic, self.on_message)
         self._thread = threading.Thread(target=self._worker, name="uploader", daemon=True)
         self._thread.start()
@@ -242,16 +321,13 @@ class Uploader(object):
     def on_message(self, topic, msg):
         msg = clean_json(msg)
         with self._lock:
-            if topic in HISTORY_FIELDS:
-                self._add_history(msg, HISTORY_FIELDS[topic])
-            if topic == TOPIC_GW_STATE:
-                self._state_alerts(msg)
-            if topic in OVERWRITE:
-                self._overwrite(OVERWRITE[topic], msg)
-            elif topic == TOPIC_GW_CAUSE:
-                self._cause(msg)
-            elif topic == TOPIC_GW_ALERT:
-                self._alert(msg)
+            handler = {
+                TOPIC_NODE1_TELEMETRY: self._on_node1, TOPIC_NODE2_TELEMETRY: self._on_node2,
+                TOPIC_GW_ENV: self._on_env, TOPIC_GW_STATE: self._on_state, TOPIC_GW_VISION: self._on_vision,
+                TOPIC_GW_CAUSE: self._on_cause, TOPIC_GW_ALERT: self._on_alert, TOPIC_GW_HEALTH: self._on_health,
+            }.get(topic)
+            if handler:
+                handler(msg)
 
     def _ts(self, msg):
         ts = msg.get("ts")
@@ -261,30 +337,61 @@ class Uploader(object):
         self.outbox.add(path, ts, encode(record))
         self.stats["queued"] += 1
 
-    def _overwrite(self, path, msg):
+    def _throttled(self, path, record, ts):
         now = self.clock()
         rate = float(self.rates.get(path, 0))
         if rate and now - self._last_sent.get(path, -1e12) < rate:
             return
         self._last_sent[path] = now
-        record = strip_ids(msg)
-        if path == "state":
-            record["outbox_pending"] = self.outbox.pending()
-            record["last_upload_ts"] = self.stats["last_ok_ts"]
-        self._queue(path, self._ts(msg), record)
+        self._queue(path, ts, record)
 
-    def _cause(self, msg):
-        record = strip_ids(msg)
-        record.pop("snapshot_path", None)  # local Jetson path; snapshots never go to Firebase
-        ts = self._ts(msg)
-        record.setdefault("id", "c%d" % int(ts))
-        self._queue("cause/latest", ts, record)
-        self._queue("cause/history/" + str(record["id"]), ts, record)
+    def _on_node1(self, msg):
+        self._last_seen["node1"] = self.clock()
+        self._node1.update(pick(msg, NODE1_FIELDS))
+        if "batt_temp_c" in msg:
+            self._node2["batt_temp_c"] = msg["batt_temp_c"]
+        self._add_history(msg)
+        self._throttled("telemetry/node1/latest", dict(self._node1), self._ts(msg))
 
-    def _alert(self, msg):
-        record = dict((k, msg[k]) for k in ALERT_FIELDS if k in msg)
+    def _on_node2(self, msg):
+        self._last_seen["node2"] = self.clock()
+        self._node2.update(pick(msg, NODE2_FIELDS))
+        if "plugged" not in msg and "docked" in msg:
+            self._node2["plugged"] = msg["docked"]
+        self._throttled("telemetry/node2/latest", dict(self._node2), self._ts(msg))
+
+    def _on_env(self, msg):
+        self._add_history(msg)
+        self._throttled("env/latest", pick(msg, ENV_FIELDS), self._ts(msg))
+
+    def _on_state(self, msg):
+        for name in ("pm25_corrected", "fan_pct", "mode"):
+            if name in msg:
+                self._node1[name] = msg[name]
+        self._add_history(msg)
+        self._state_alerts(msg)
+        record = pick(msg, STATE_FIELDS)
+        record["alerts"] = [a.get("type") if isinstance(a, dict) else a for a in record.get("alerts") or []]
+        self._throttled("state", record, self._ts(msg))
+
+    def _on_vision(self, msg):
+        if "person_present" in msg:
+            self._node1["person"] = bool(msg["person_present"])
+
+    def _on_cause(self, msg):
+        record = pick(msg, CAUSE_FIELDS)  # snapshot_path stays local: snapshots never go to Firebase
+        record.setdefault("ts", int(self._ts(msg)))
+        self._queue("cause/latest", self._ts(msg), record)
+
+    def _on_alert(self, msg):
+        """ab/gw/alert {ts, type, severity, msg} or a contract record {ts, level, title, text, sent_to}."""
+        record = pick(msg, ALERT_FIELDS)
+        record.setdefault("level", msg.get("severity", "warn"))
+        record.setdefault("title", ALERT_TITLES.get(msg.get("type"), msg.get("type", "แจ้งเตือน")))
+        if "text" not in record and "msg" in msg:
+            record["text"] = msg["msg"]
         ts = self._ts(msg)
-        record.setdefault("ts", ts)
+        record["ts"] = int(ts)
         self._alert_n = (self._alert_n + 1) % 1000
         self._queue("alerts/%013d%03d" % (int(ts * 1000), self._alert_n), ts, record)
 
@@ -298,39 +405,53 @@ class Uploader(object):
                 continue
             active.add(item["type"])
             if item["type"] not in self._active_alerts:
-                record = dict(item)
-                record["ts"] = item.get("since", msg.get("ts"))
-                record.pop("since", None)
-                self._alert(record)
+                alert = dict(item)
+                alert["ts"] = item.get("since", msg.get("ts"))
+                self._on_alert(alert)
         self._active_alerts = active
 
-    def _add_history(self, msg, fields):
-        values = dict((f, msg[f]) for f in fields if f in msg)
-        if not values:
-            return
-        ts = self._ts(msg)
-        for name, buckets in self.history.items():
-            self._queue_bucket(name, buckets.add(ts, values))
+    def _on_health(self, msg):
+        self._health = dict(msg)
+        nodes = msg.get("nodes") or {}
+        for node in ("node1", "node2"):
+            if isinstance(nodes.get(node), dict) and "online" in nodes[node]:
+                self._health[node + "_online"] = nodes[node]["online"]
 
-    def _queue_bucket(self, name, done):
+    def _add_history(self, msg):
+        for name in HISTORY_FIELDS:
+            if name in msg:
+                self._history_values[name] = msg[name]
+        values = pick(msg, HISTORY_FIELDS)
+        if values:
+            self._queue_minute(self._history.add(self._ts(msg), values))
+
+    def _queue_minute(self, done):
         if done:
-            key, record = done
-            self._queue("history/%s/%s" % (name, key), float(key), record)
+            minute, record = done
+            self._queue("history/node1/%d" % minute, float(minute), record)
 
-    def flush_history(self):
+    def tick(self):
+        """Periodic work from the worker: close the finished minute and write health."""
         with self._lock:
             now = self.clock()
-            for name, buckets in self.history.items():
-                self._queue_bucket(name, buckets.flush(now))
+            self._queue_minute(self._history.flush(now))
+            if now - self._last_health >= self.health_every_s:
+                self._last_health = now
+                record = pick(self._health, HEALTH_FIELDS)
+                for node in ("node1", "node2"):
+                    if node + "_online" not in record:
+                        record[node + "_online"] = now - self._last_seen.get(node, -1e12) < self.node_offline_s
+                record["pending_rows"] = self.outbox.pending()
+                record["last_upload_ts"] = int(self.stats["last_ok_ts"]) if self.stats["last_ok_ts"] else None
+                self._queue("health", now, record)
 
     # --- outbox -> Firebase ------------------------------------------------------------------------
 
     def _worker(self):
         while not self._stop.is_set():
             try:
-                self.flush_history()
+                self.tick()
                 delay = self.step()
-                self._maybe_clean_history()
             except Exception:
                 log.exception("upload step failed")
                 delay = self.backoff_max
@@ -372,38 +493,12 @@ class Uploader(object):
         delay = self._backoff
         self._backoff = min(self.backoff_max, self._backoff * 2)
         if status in (401, 403):
-            log.error("firebase refused auth (%s); check FIREBASE_TOKEN and database rules", status)
+            log.error("firebase refused the write (%s %s); check the device account and the database rules",
+                      status, body)
         else:
             log.warning("upload failed (%s %s), %d rows waiting, retry in %.0f s",
                         status, body, len(rows), delay)
         return delay * random.uniform(0.8, 1.2)
-
-    def _maybe_clean_history(self):
-        now = self.clock()
-        if self._last_retention is not None and now - self._last_retention < self.retention_every_s:
-            return
-        if self.stats["last_ok_ts"] is None:
-            return  # wait until Firebase is reachable
-        self._last_retention = now
-        self.clean_history(now)
-
-    def clean_history(self, now):
-        """Delete history keys older than keep_s. Returns how many were deleted (None if Firebase failed)."""
-        deleted = 0
-        for name, keep in self.keep_s.items():
-            keys = self.firebase.shallow_keys("history/" + name)
-            if keys is None:
-                return None
-            old = [k for k in keys if k.isdigit() and int(k) < now - keep]
-            if old:
-                status, body = self.firebase.patch(dict(("history/%s/%s" % (name, k), None) for k in old))
-                if status != 200:
-                    log.warning("history cleanup of %s failed: %s %s", name, status, body)
-                    return None
-                deleted += len(old)
-        if deleted:
-            log.info("deleted %d old history keys", deleted)
-        return deleted
 
     def _maybe_publish_stats(self):
         now = self.clock()
@@ -415,7 +510,13 @@ class Uploader(object):
                                               "last_error": self.stats["last_error"]})
 
 
+def device_email(device_id):
+    return "device-%s@devices.airraikordee.example" % device_id
+
+
 def main():
+    import requests
+
     from common.config import load_config, secret, writable_dir
     from common.logging_setup import setup_logging
     from common.mqtt_client import MqttClient
@@ -426,17 +527,24 @@ def main():
     u = cfg.get("uploader", {})
     db_path = os.path.join(writable_dir(cfg.get("data_dir", "/var/lib/airraikordee"), "data"),
                            u.get("db_file", "outbox.db"))
-    db_url = secret("FIREBASE_DB_URL")
-    if not db_url:
-        log.error("FIREBASE_DB_URL is not set in .env; data is only stored locally until it is")
     outbox = Outbox(db_path, int(u.get("max_rows", 500000)))
-    firebase = FirebaseRest(db_url or "http://127.0.0.1:9", secret("FIREBASE_TOKEN"), float(u.get("timeout_s", 10)))
+
+    db_url = secret("FIREBASE_DB_URL")
+    device_id = secret("DEVICE_ID", "airraikordee-01")
+    missing = [k for k in ("FIREBASE_DB_URL", "FIREBASE_API_KEY", "DEVICE_PASSWORD") if not secret(k)]
+    if missing:
+        log.error("%s not set in .env; data is only stored locally until they are", ", ".join(missing))
+    session = requests.Session()
+    timeout = float(u.get("timeout_s", 10))
+    auth = DeviceAuth(secret("FIREBASE_API_KEY"), device_email(device_id), secret("DEVICE_PASSWORD"), session,
+                      timeout)
+    firebase = FirebaseRest(db_url or "http://127.0.0.1:9", device_id, auth, session, timeout)
 
     client = MqttClient("uploader", cfg)
     client.start(wait=False)
     uploader = Uploader(cfg, client, outbox, firebase)
     uploader.start()
-    log.info("uploader running, outbox %s (%d pending)", db_path, outbox.pending())
+    log.info("uploader running for devices/%s, outbox %s (%d pending)", device_id, db_path, outbox.pending())
 
     try:
         run_until_signal(lambda: log.info("stats %s pending=%d", uploader.stats, outbox.pending()), tick_s=60)
