@@ -93,3 +93,11 @@ The dashboard needs these. They add to the MQTT table above, they do not change 
 11. **UART heartbeat line** = `{"cmd":"hb","ts":..}` every 500 ms, no ACK. Every other command line carries the
     bridge's own `seq`, and Node 1 answers `{"ack":<seq>}`. The bridge then publishes `ab/node1/ack {ack_seq}`
     with the seq the MQTT sender used.
+12. **Vision and dust-cause topics** (gateway-internal, used by Komet's modules):
+    - `ab/gw/vision` + `surveying` (bool): `decision.py` should not send `aim` while it is true.
+    - `ab/gw/vision/cmd`: `{"cmd": "snapshot", "tag": ...}` or `{"cmd": "survey", "reason": ...}` (from `decision.py` or voice).
+    - `ab/gw/vision/snapshot`: `{ts, path, tag, person_present}` after each snapshot (path is local to the Jetson).
+    - `ab/gw/vision/survey`: `{ts, snapshots: [paths], reason}` when a survey ends.
+    - `ab/gw/cause/request`: `{ts, reason}` asks `cause_rules` for a fresh answer (survey end, voice "ทำไมฝุ่นเยอะ").
+    - `ab/gw/cause` + `id`, `source`, `features` (rules), `reason`, and for cloud answers `rules_cause`, `rules_confidence`.
+      The uploader sends only the contract fields to Firebase.

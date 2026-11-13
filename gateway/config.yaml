@@ -60,20 +60,36 @@ decision:
 
 # --- vision/vision.py ---
 vision:
+  device: /dev/video0
   width: 640
   height: 480
   fps: 10
   hfov_deg: 60                      # MEASURE the real webcam
   vfov_deg: 45
   publish_hz: 5
+  model: ssd-mobilenet-v2
+  threshold: 0.5
+  person_height_m: 1.7              # for the distance estimate
   snapshot_keep: 200
+  survey_every_s: 1800              # also on a dust spike and on {"cmd":"survey"}
+  survey_step_timeout_s: 20         # 180° takes ~15 s
+  survey_settle_s: 1.0
 
 # --- ai/cause_rules.py, ai/cause_cloud.py ---
 cause:
   spike_ugm3: 15
   spike_window_s: 300
   humidity_rise_pct: 5
+  slow_rise_ugm3: 10
+  slow_window_s: 1800
+  outdoor_ratio: 0.8
+  min_pm: 25                        # re-check every check_every_s while PM is at least this
+  check_every_s: 300
+  outdoor_pm_url: ""                # JSON API for outdoor PM2.5 (empty = not used)
+  outdoor_pm_key: pm25              # dotted path to the number in that JSON, e.g. data.iaqi.pm25.v
   cloud_min_confidence: 0.8
   cloud_min_interval_s: 600
-  cloud_timeout_s: 10
-  outdoor_pm_url: ""
+  cloud_timeout_s: 30               # the model thinks before answering; 10 s was too short
+  snapshot_max_age_s: 900
+  max_images: 8
+  image_max_width: 640

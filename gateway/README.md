@@ -8,7 +8,10 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 | `bridge/uart_bridge.py` | Node 1 USB serial <-> MQTT, ACK/retry, heartbeat, auto-reconnect | done |
 | `cloud/uploader.py` | MQTT -> SQLite outbox -> Firebase REST under `devices/<id>`, device-account login, backoff (E4) | done (uplink) |
 | `tools/sim_node1.py`, `tools/sim_node2.py` | fake nodes, see below | done |
-| `sensors/ vision/ ai/ voice/ brain/ notify/ health/` | other modules | todo |
+| `vision/vision.py` | webcam + detectNet → `ab/gw/vision` (pan/tilt error, distance) 5 Hz; snapshots; 8-direction survey | done, needs the camera |
+| `ai/cause_rules.py` | local dust-cause rules → `ab/gw/cause` (source rules) | done |
+| `ai/cause_cloud.py` | blurred survey photos → Claude (`claude-opus-5-5`, JSON answer) when the rules are unsure | done, needs `AI_API_KEY` |
+| `sensors/ voice/ brain/ notify/ health/` | other modules | todo |
 | `udev/99-airraikordee.rules` | stable `/dev/airraikordee-node1` name for Node 1 | done |
 | `tests/` | pytest, no hardware needed | |
 
@@ -25,6 +28,9 @@ sudo cp udev/99-airraikordee.rules /etc/udev/rules.d/ && sudo udevadm control --
 ```bash
 python3 -m bridge.uart_bridge
 python3 -m cloud.uploader
+python3 -m vision.vision
+python3 -m ai.cause_rules
+python3 -m ai.cause_cloud
 python3 -m pytest tests
 ```
 On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (both git-ignored).
