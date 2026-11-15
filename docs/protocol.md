@@ -1,103 +1,575 @@
-# Protocol (shared contract — change only with the whole team)
+# Protocol
 
-All messages are JSON. Every telemetry/command carries `node_id`, `seq` (uint32, per sender), `ts` (unix seconds).
+### Wire format
+
+- **Transport:** MQTT 3.1.1 to the Mosquitto broker on the Jetson, port 1883, username and password from `.env`, keepalive 30 s, clean session. Nodes connect over Wi-Fi (Node 2) or through the UART bridge (Node 1).
+- **Payload encoding:** one JSON object per message, UTF-8, compact (no spaces), Thai text written as UTF-8 (not `\uXXXX` escapes). The gateway never sends `NaN` or `Infinity`; a bad reading is `null`. No binary payloads.
+- **QoS and retain:** the gateway publishes with QoS 1 (the vision module with QoS 0), retain off, and subscribes with QoS 1. The simulated nodes publish telemetry with QoS 0 and events and acks with QoS 1. Only `ab/gw/config` is retained (see MQTT additions).
+- **Common fields:** every telemetry and command carries `node_id`, `seq` and `ts`.
+
+Wire types used below. All of them are JSON types; the width is what the sender stores before it writes the number.
+
+| Type | On the wire | Meaning |
+|---|---|---|
+| `string` | JSON string | UTF-8 text |
+| `integer` | JSON number without a decimal point | whole number; unit and range in the comment |
+| `float` | JSON number, decimals as shown | unit in the comment; decimals are what the sender rounds to |
+| `boolean` | `true` / `false` | |
+| `unix_seconds` | JSON number | seconds since 1970-01-01 UTC. |
+| `uint32` | JSON integer 0 to 4294967295 | only `seq`; wraps to 0 |
+| `null` | `null` | value unknown or missing; never `-1` or `0` |
 
 ### MQTT topics
 | Topic | Direction | Payload |
 |---|---|---|
-| `ab/node1/telemetry` | bridge → all | `{node_id, seq, ts, pm1, pm25, pm10, fan_rpm, pan_deg, tilt_deg, button}` |
-| `ab/node1/event` | bridge → all | `{node_id, seq, ts, type: "wake"\|"stop_pressed"\|"servo_timeout"}` |
-| `ab/node1/cmd` | brain/voice → bridge | `{seq, ts, cmd: "aim", pan_deg, tilt_deg}` / `{cmd:"fan", pct}` / `{cmd:"stop"}` / `{cmd:"survey_step", pan_deg}` |
-| `ab/node2/telemetry` | dock → all | `{node_id, seq, ts, docked, charging, voltage, current_a, temp_c, est_percent}` |
-| `ab/node2/cmd` | brain → dock | `{seq, ts, charge_allowed: bool, reason}` |
-| `ab/+/ack` | receiver → sender | `{ack_seq}` |
-| `ab/gw/env` | sensors → all | `{ts, temp_c, rh, pressure_hpa}` |
-| `ab/gw/vision` | vision → all | `{ts, persons: [{pan_err_deg, tilt_err_deg, dist_est_m, conf}], person_present}` |
-| `ab/gw/cause` | ai → all | `{ts, cause, confidence, advice_th, snapshot_path}` |
-| `ab/gw/state` | brain → all | `{ts, mode, fan_pct, target, pm25_corrected, alerts:[...]}` |
+| `ab/node1/telemetry` | bridge → all | `Node1Telemetry` |
+| `ab/node1/event` | bridge → all | `Node1Event` |
+| `ab/node1/cmd` | brain/voice → bridge | `Node1Cmd` |
+| `ab/node2/telemetry` | dock → all | `Node2Telemetry` |
+| `ab/node2/cmd` | brain → dock | `Node2Cmd` |
+| `ab/node1/ack`, `ab/node2/ack` | receiver → sender | `Ack` |
+| `ab/gw/env` | sensors → all | `GwEnv` |
+| `ab/gw/vision` | vision → all | `GwVision` |
+| `ab/gw/cause` | ai → all | `GwCause` |
+| `ab/gw/state` | brain → all | `GwState` |
+
+```ts
+interface Node1Telemetry {
+  node_id: string;          // "node1"
+  seq: uint32;
+  ts: unix_seconds;
+  pm1: integer;             // µg/m³
+  pm25: integer;            // µg/m³
+  pm10: integer;            // µg/m³
+  fan_rpm: integer;         // rpm, 0 to about 1700
+  pan_deg: float;           // degrees, -180 to 180, 1 decimal
+  tilt_deg: float;          // degrees, -30 to 30, 1 decimal
+  button: boolean;          // true while the stop button is pressed
+}
+
+interface Node1Event {
+  node_id: string;          // "node1"
+  seq: uint32;
+  ts: unix_seconds;
+  type: "wake" | "stop_pressed" | "servo_timeout";   // JSON string
+}
+
+interface Node1CmdBase { seq: uint32; ts: unix_seconds }
+type Node1Cmd = Node1CmdBase & (
+  | { cmd: "aim"; pan_deg: float; tilt_deg: float }  // degrees
+  | { cmd: "fan"; pct: integer }                     // 0 to 100
+  | { cmd: "stop" }
+  | { cmd: "survey_step"; pan_deg: float }           // degrees
+);
+
+interface Node2Telemetry {
+  node_id: string;          // "node2"
+  seq: uint32;
+  ts: unix_seconds;
+  docked: boolean;
+  charging: boolean;
+  voltage: float;           // V, 2 decimals
+  current_a: float;         // A, 2 decimals
+  temp_c: float;            // °C, 1 decimal
+  est_percent: integer | null;   // 0 to 100; null while the cable is unplugged
+}
+
+interface Node2Cmd {
+  seq: uint32;
+  ts: unix_seconds;
+  charge_allowed: boolean;
+  reason: string;
+}
+
+interface Ack {
+  ack_seq: uint32;          // the seq being acknowledged
+  ts?: unix_seconds;        // present on acks the UART bridge publishes
+}
+
+interface GwEnv {
+  ts: unix_seconds;
+  temp_c: float;            // °C
+  rh: float;                // % relative humidity
+  pressure_hpa: float;      // hPa
+}
+
+interface GwVision {
+  ts: unix_seconds;
+  persons: {                // nearest first
+    pan_err_deg: float;     // degrees, 1 decimal; > 0 = person is to the right
+    tilt_err_deg: float;    // degrees, 1 decimal; > 0 = person is above the centre
+    dist_est_m: float | null;   // metres, 2 decimals
+    conf: float;            // 0 to 1, 2 decimals
+  }[];
+  person_present: boolean;
+}
+
+interface GwCause {
+  ts: unix_seconds;
+  cause: string;            // see CauseRecord
+  confidence: float;        // 0 to 1, 2 decimals
+  advice_th: string;
+  snapshot_path: string;    // local Jetson path
+}
+
+interface GwState {
+  ts: unix_seconds;
+  mode: Mode;               // JSON string
+  fan_pct: integer;         // 0 to 100
+  target: { pan_deg: float; tilt_deg: float };   // degrees
+  pm25_corrected: float;    // µg/m³
+  alerts: StateAlert[];
+}
+```
+
+```json
+{
+  "node_id": "node1",
+  "seq": 4021,
+  "ts": 1794383760,
+  "pm1": 12,
+  "pm25": 17,
+  "pm10": 22,
+  "fan_rpm": 1180,
+  "pan_deg": 112.0,
+  "tilt_deg": 10.0,
+  "button": false
+}
+```
 
 ### UART (Node 1 ↔ bridge)
-- Newline-delimited JSON, 115200 baud (USB-CDC ignores baud but keep it set).
-- Commands from bridge need `{"ack":seq}` within 300 ms; retry up to 3 times, then publish `ab/gw/state` alert.
+- Newline-delimited JSON, 115200 baud (USB-CDC ignores baud but keep it set), UTF-8.
+- Commands from bridge need `{"ack": <seq>}` (`seq` = the command's `seq`, uint32) within 300 ms; retry up to 3 times, then publish `ab/gw/state` alert.
 - Bridge must auto-reconnect if the serial port disappears (ESP32 reset / cable unplug).
-- If Node 1 receives no command or heartbeat for 2 s it stops servos (handled in firmware; bridge sends heartbeat every 500 ms).
+- If Node 1 receives no command or heartbeat for 2 s it stops servos (handled in firmware). The bridge sends a heartbeat every 500 ms: `{"cmd": "hb", "ts": <unix_seconds>}`.
 
 ---
 
 ## Firebase Realtime Database (Jetson ↔ dashboard)
 
-Source of truth: Farn's data contract (https://web.polishstack.com:36523/airraikordee-contract/, copied 13 Nov).
-Change paths or fields only through a PR to this file, approved by Komet (gateway) and Kittipich, then Farn updates
-the contract page and the rules.
+Read first: the dashboard does not use MQTT. It reads and writes Firebase only, and `uploader.py` on the Jetson copies MQTT data up and dashboard writes back down.
+One Firebase project holds many units. Everything a unit owns lives under `devices/(deviceId)/`, with deviceId = `airraikordee-NN` (it never appears in MQTT topics).
 
-One project (`airraikordee`, Realtime Database in Singapore) for every unit. Everything of one unit lives under
-`devices/(deviceId)`, deviceId = `airraikordee-NN`. The Jetson writes with its device account
-`device-(deviceId)@devices.airraikordee.example` (`signInWithPassword`, ID token valid 1 h, refreshed before it
-expires or after a 401). The dashboard reads, and writes only `config` and `feedback`.
+General rules:
+- Payloads keep the MQTT field names and units. `node_id` is dropped because the path already names the unit, and `seq` is dropped because it only orders MQTT messages. `ts` stays the sender's unix seconds (the Jetson keeps NTP so charts do not shift). The uploader sends only the fields listed under Records; the rest stays on the Jetson.
+- Every record goes to the SQLite outbox first (E4) and is deleted only after HTTP 200. After a network outage, old records are sent with their original `ts`.
+- The uploader sends many paths in one multi-path `PATCH devices/(deviceId).json`. "overwrite" / "PUT" below means the value at that path is replaced. Keys the uploader creates (`alerts`, `history`, `cause/history`) are made from `ts`, so a retried batch never adds a duplicate.
+- Missing values are `null`, never `-1` or `0`.
+- No secrets under `devices/(deviceId)/` (the owner can read everything there): the device password and API keys stay in the Jetson `.env`. The one exception is a notification webhook: the owner sets it from the dashboard into `deviceSecrets/(deviceId)/(channel)`, which the owner can write but not read back (see Notification channels). Snapshots never go to Firebase.
 
-```
-devices/(deviceId)/
-  telemetry/node1/latest    J  overwritten ~1 s
-  telemetry/node2/latest    J  overwritten ~1 s
-  env/latest                J
-  history/node1/(minuteTs)  J  one row per minute, key = ts - ts % 60 (unix seconds)
-  state                     J
-  cause/latest              J
-  alerts/(id)               J  one entry per new alert
-  health                    J  ~30 s
-  feedback/(id)             O  "ไม่ใช่สาเหตุนี้"
-  config                    O  Settings; the Jetson reads it every 5–10 s
-users/(uid)/devices/(deviceId) = {"code": "AB12-CD34"}   claim (object, not a bare string)
-users/(uid)/line, users/(uid)/linkcode, lineLinks/(LINE userId)   LINE linking
-claims/(code) = {"deviceId": "...", "used": false}       created by hand in the console
-```
+### Paths (all under `devices/(deviceId)/` unless noted)
 
-| Path | Fields | Filled by uploader from |
+| Path | Written by | Read by | How | Rate | Payload |
+|---|---|---|---|---|---|
+| `telemetry/node1/latest` | uploader | dashboard | overwrite | 1 s | Node 1 record (fields below) |
+| `telemetry/node2/latest` | uploader | dashboard | overwrite | 1 s | Node 2 record (fields below) |
+| `env/latest` | uploader | dashboard | overwrite | 1 s | last `ab/gw/env` |
+| `state` | uploader | dashboard | overwrite | 1 s | last `ab/gw/state` |
+| `history/node1/{minuteTs}` | uploader | dashboard | PUT | 1 min | 1-minute averages, kept 48 h |
+| `history/node1_m15/{ts}` | uploader | dashboard | PUT | 15 min | 15-minute averages, kept 30 days |
+| `cause/latest` | uploader | dashboard | overwrite | each result | cause record |
+| `cause/history/{id}` | uploader | dashboard | PUT | each result | cause record |
+| `alerts/{key}` | uploader | dashboard | PUT, new key | when an alert starts | alert record |
+| `health` | uploader | dashboard | overwrite | 30 s | health record |
+| `feedback/{push_id}` | owner (dashboard) | uploader | POST | button press | "ไม่ใช่" on a dust cause |
+| `config` | owner (dashboard) | uploader | PATCH | when saved | settings |
+| `ui_cmd/{push_id}` | owner (dashboard) | uploader | POST | button press | one-shot command |
+
+
+Outside `devices/`:
+
+| Path | Written by | Payload |
 |---|---|---|
-| `telemetry/node1/latest` | `ts, pm25, pm25_corrected, pm10, fan_pct, fan_rpm, pan_deg, tilt_deg, person (bool), mode` | `ab/node1/telemetry`; `pm25_corrected`, `fan_pct`, `mode` from `ab/gw/state`; `person` = `ab/gw/vision.person_present` |
-| `telemetry/node2/latest` | `ts, mode, voltage, current_a, temp_c, batt_temp_c, plugged, est_percent` | `ab/node2/telemetry` (`plugged` = `docked` if absent); `batt_temp_c` from `ab/node1/telemetry` |
-| `env/latest` | `ts, temp_c, rh, pressure_hpa` | `ab/gw/env` |
-| `history/node1/(minuteTs)` | `ts, pm25, temp_c, rh, fan_pct` | averages over the minute; `ts` = last sample |
-| `state` | `mode, fan_pct, target, alerts` | `ab/gw/state`; `alerts` = list of type strings, e.g. `["pm25_high"]` |
-| `cause/latest` | `ts, cause, confidence, source (rules\|cloud), advice_th` | `ab/gw/cause` (`snapshot_path` is never uploaded) |
-| `alerts/(id)` | `ts, level, title, text, sent_to` | each new item in `state.alerts`, and each `ab/gw/alert` (`severity` → `level`, `msg` → `text`) |
-| `health` | `node1_online, node2_online, cpu_temp_c, pending_rows, last_upload_ts, filter_hours, pms_hours` | `ab/gw/health` + the uploader's own `pending_rows`, `last_upload_ts`, and node online from telemetry age |
-| `feedback/(id)` | `cause_ts, correct (bool), true_cause` | dashboard |
-| `config` | `pm_alert, night_start, night_end, manual_fan_pct, fan_mode, filter_reset_ts` | dashboard → Jetson config listener (AIR-97) |
+| `users/(uid)/devices/(deviceId)` | owner | `UserDevice`, proof the owner claimed the unit |
+| `claims/(code)` | admin, then owner sets `used` | `Claim`, one-time claim code |
+| `deviceSecrets/(deviceId)/(channel)` | owner (write only) | one secret string per notification channel, e.g. `discord`; read by the unit's own device account only |
 
-- Every record goes to the SQLite outbox first and is deleted only after HTTP 200 (E4). One `PATCH devices/(id).json`
-  carries many paths.
-- `ts` = unix seconds of the sender; the Jetson must sync NTP.
-- Units: µg/m³ · °C · % · hPa · A · V, kept out of field names except `_c`, `_pct`, `_a`.
-- No secrets in Git: the device password is sent privately; the web `apiKey` is not secret.
+```ts
+interface UserDevice { code: string }
+interface Claim { deviceId: string; used: boolean }
+```
+
+Claim order: the dashboard first writes `users/(uid)/devices/(deviceId)` (the rule checks `used` is still `false`),
+then sets `claims/(code)/used = true`. The other order is denied, and nobody can list `claims`.
+
+### Accounts and access
+
+Two kinds of Firebase Auth account sign in:
+
+| Account | Who | Sign-in | Can the owner change it |
+|---|---|---|---|
+| Owner | the end user, one account per person | the owner's own choice: email and password, a changed password, or another provider such as Google | yes, it is the owner's account |
+| Device | one per unit, `device-(deviceId)@devices.airraikordee.example` | `signInWithPassword` from the Jetson, password in the Jetson `.env` | no, the owner never gets the password, and nobody changes it after the unit is sold |
+
+The rules do not look at how an owner signs in. They check that `users/(uid)/devices/(deviceId)` exists for the signed-in `uid`. A device account is recognised by its email.
+
+Rules (`dashboard/database.rules.json`):
+- Device account: writes the paths the uploader writes, and reads its own unit, including `config`, `ui_cmd`, `feedback` and `deviceSecrets/(deviceId)`.
+- Owner who claimed the unit: reads everything under `devices/(deviceId)/`; writes `config` and `feedback`; creates `ui_cmd` entries (cannot change an existing one; `by` must be the owner's `uid`; `cmd` must be one of the names below); writes `deviceSecrets/(deviceId)/(channel)`, whose value must start with `https://discord.com/api/webhooks/` and be at most 300 characters.
+- Another unit's account, another owner, and anyone signed out read nothing (E5).
+
+The Jetson refreshes its 1-hour ID token before it expires and retries once after HTTP 401. The dashboard signs in, reads `users/(uid)/devices` to find its deviceId, then listens to the smallest branch each screen needs.
+
+The uploader polls `config`, `ui_cmd` and `feedback` every 3 s, so a change on the web reaches the unit within a few seconds. It skips `feedback` keys it has already copied.
+
+### Records
+
+Field types use the wire types from the top of this file. Firebase stores JSON, so `integer` and `float` are both a JSON number there; `ts` is always a whole number (the uploader rounds it down).
+
+**`telemetry/node1/latest`**: from `ab/node1/telemetry`; `pm25_corrected`, `fan_pct` and `mode` (= `state.mode`) from `ab/gw/state`; `person` = `ab/gw/vision.person_present`.
+```ts
+interface Node1Record {
+  ts: unix_seconds;
+  pm25: float | null;
+  pm25_corrected: float | null;
+  pm10: float | null;
+  fan_pct: integer | null;
+  fan_rpm: integer | null;
+  pan_deg: float | null;
+  tilt_deg: float | null;
+  person: boolean | null;
+  mode: Mode | null;
+}
+```
+
+**`telemetry/node2/latest`**: from `ab/node2/telemetry`; `mode` / `fault` are the Node 2 values (MQTT addition 1); `plugged` = `docked`; `batt_temp_c` from `ab/node1/telemetry` (MQTT addition 2).
+```ts
+interface Node2Record {
+  ts: unix_seconds;
+  mode: "IDLE" | "DOCKED" | "CHARGING" | "FULL" | "FAULT" | "FIELD_TEST" | null;
+  fault: "over_current" | "over_temp" | "timer" | null;
+  voltage: float | null;
+  current_a: float | null;
+  temp_c: float | null;
+  batt_temp_c: float | null;
+  plugged: boolean | null;
+  est_percent: integer | null;
+}
+```
+
+**`env/latest`** = `ab/gw/env`:
+```ts
+interface EnvRecord {
+  ts: unix_seconds;
+  temp_c: float | null;
+  rh: float | null;
+  pressure_hpa: float | null;
+}
+```
+
+**`state`** = `ab/gw/state`. The uploader's outbox counts are not in `state`; they are `pending_rows` and `last_upload_ts` in `health`.
+```ts
+type Mode = "aim_person" | "survey" | "night" | "idle";   // names in the gateway spec, §4 decision.py
+
+interface StateRecord {   // same shape as GwState
+  ts: unix_seconds;
+  mode: Mode;
+  fan_pct: integer;
+  target: { pan_deg: float; tilt_deg: float };
+  pm25_corrected: float;
+  alerts: StateAlert[];
+}
+
+interface StateAlert {
+  type: AlertType;
+  level: "info" | "warn" | "crit";
+  title: string;
+  text: string;
+  since: unix_seconds;
+}
+```
+```json
+{
+  "ts": 1794383760,
+  "mode": "aim_person",
+  "fan_pct": 45,
+  "target": { "pan_deg": 112, "tilt_deg": 10 },
+  "pm25_corrected": 21.4,
+  "alerts": [
+    {
+      "type": "pm_high",
+      "level": "warn",
+      "title": "PM2.5 สูง",
+      "text": "PM2.5 68 µg/m³ เกิน 10 นาที",
+      "since": 1794383160
+    }
+  ]
+}
+```
+
+**Cause record** (`cause/latest` and `cause/history/{id}`):
+```ts
+interface CauseRecord {
+  id: string;               // "c" + ts
+  ts: unix_seconds;
+  cause: "window_open" | "cooking" | "incense_candle" | "smoking" | "outdoor_infiltration" | "unknown";
+  confidence: float;       // 0 to 1
+  source: "rules" | "cloud";
+  advice_th: string;
+  pm25_corrected: float;
+}
+```
+```json
+{
+  "id": "c1794383760",
+  "ts": 1794383760,
+  "cause": "cooking",
+  "confidence": 0.74,
+  "source": "cloud",
+  "advice_th": "น่าจะมาจากการทำอาหาร เปิดพัดลมดูดควันหรือปิดประตูครัว",
+  "pm25_corrected": 62.0
+}
+```
+`snapshot_path` is a local Jetson path and is not uploaded (privacy).
+
+**Alert record** (`alerts/{key}`): one entry when an item first appears in `state.alerts` (`ts` = its `since`), and one per `ab/gw/alert` message (MQTT addition 9). `{key}` is `ts` in milliseconds (13 digits) plus a 3-digit counter, so keys sort by time.
+```ts
+interface AlertRecord {
+  ts: unix_seconds;
+  type: AlertType;
+  level: "info" | "warn" | "crit";
+  title: string;
+  text: string;
+  sent_to: string[];        // names of the channels that got it (see Notification channels)
+}
+```
+```json
+{
+  "ts": 1794383760,
+  "type": "pm_high",
+  "level": "warn",
+  "title": "PM2.5 สูง",
+  "text": "PM2.5 68 µg/m³ เกิน 10 นาที",
+  "sent_to": ["discord"]
+}
+```
+
+```ts
+type AlertType = "pm_high" | "node_offline" | "uart_fail" | "charge_cut_temp" | "charge_fault"
+               | "battery_low" | "charge_full" | "filter_clogged" | "stop_pressed";
+```
+
+| `type` | `level` | When |
+|---|---|---|
+| `pm_high` | warn | `pm25_corrected` > `config.pm_alert` for `config.pm_alert_min` minutes |
+| `node_offline` | crit | node not seen for 60 s |
+| `uart_fail` | warn | a Node 1 command failed after 3 retries |
+| `charge_cut_temp` | crit | charging stopped for battery or charger temperature |
+| `charge_fault` | crit | Node 2 latched FAULT (over-current, timer) |
+| `battery_low` | warn | `est_percent` < 25 |
+| `charge_full` | info | Node 2 reached FULL |
+| `filter_clogged` | warn | fan RPM well below the filter baseline at the same `fan_pct` |
+| `stop_pressed` | info | stop button pressed on the unit |
+
+**`health`**:
+```ts
+interface HealthRecord {
+  ts: unix_seconds;               // added by the uploader
+  node1_online: boolean;
+  node1_last_seen: unix_seconds;
+  node2_online: boolean;
+  node2_last_seen: unix_seconds;
+  cpu_temp_c: float;
+  ram_pct: integer;
+  disk_pct: integer;
+  pending_rows: integer;     // added by the uploader
+  last_upload_ts: unix_seconds;   // added by the uploader
+  filter_hours: float;
+  pms_hours: float;
+  fan_rpm_ratio: float;
+}
+```
+```json
+{
+  "ts": 1794383760,
+  "node1_online": true,
+  "node1_last_seen": 1794383759,
+  "node2_online": true,
+  "node2_last_seen": 1794383757,
+  "cpu_temp_c": 52.0,
+  "ram_pct": 61,
+  "disk_pct": 40,
+  "pending_rows": 0,
+  "last_upload_ts": 1794383758,
+  "filter_hours": 312.5,
+  "pms_hours": 410.0,
+  "fan_rpm_ratio": 0.97
+}
+```
+- The fields other than `ts`, `pending_rows` and `last_upload_ts` come from `ab/gw/health`.
+- `node*_online` follows `health.py` (offline after 30 s without data). `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min" and the `node_offline` alert (60 s) has a source.
+- `fan_rpm_ratio` is the RPM now divided by the RPM with a fresh filter at the same `fan_pct`. A falling ratio means the filter is clogging.
+- The dashboard shows the whole unit as offline when `health.ts` is older than 90 s.
+
+**History, two time frames** (`history/node1/{minuteTs}` and `history/node1_m15/{ts}`): key = unix seconds at the start of the bucket (`ts − ts % 60` for 1 min, `ts − ts % 900` for 15 min), 10 digits, so keys sort by time. A repeated write replaces the row instead of adding one. Values are averages over the bucket; `ts` = the last sample in it.
+```ts
+interface HistoryRow {
+  ts: unix_seconds;
+  pm25: float | null;
+  pm25_corrected: float | null;
+  temp_c: float | null;
+  rh: float | null;
+  fan_pct: integer | null;
+}
+```
+```json
+{
+  "1794383760": {
+    "ts": 1794383790,
+    "pm25": 17.0,
+    "pm25_corrected": 14.2,
+    "temp_c": 29.1,
+    "rh": 71,
+    "fan_pct": 40
+  }
+}
+```
+Charts read: 1 h = `limitToLast(60)` of `history/node1`, 24 h = `limitToLast(1440)` of `history/node1` (needs 24 h of 1-minute rows), 7 d = `limitToLast(672)` of `history/node1_m15`. After an outage there are gaps, so a chart that must end exactly at "now − window" uses `orderByKey().startAt(String(fromSec))` instead. The uploader deletes keys older than the retention (48 h for 1 min, 30 days for 15 min) once a day. A 1-minute row older than 48 h survives only inside its 15-minute average.
+
+**`config`** (written by the owner, used by `decision.py`; a missing or invalid field falls back to `config.yaml`):
+```ts
+interface Config {
+  pm_alert: integer;                 // µg/m³
+  pm_alert_min: integer;             // minutes
+  alert_cooldown_min: integer;
+  night_enabled: boolean;
+  night_start: string;              // "HH:MM"
+  night_end: string;                // "HH:MM"
+  night_fan_max_pct: integer;
+  manual_fan_pct: integer | null;    // 0 to 100
+  fan_mode: "auto" | "manual";
+  fan_table: [pm25_upper: integer, fan_pct: integer][];
+  field_test: boolean;
+  filter_reset_ts: unix_seconds;
+  updated_ts: unix_seconds;
+  updated_by: string;               // uid
+  notify?: Record<string, NotifyChannel>;
+}
+```
+```json
+{
+  "pm_alert": 35,
+  "pm_alert_min": 10,
+  "alert_cooldown_min": 15,
+  "night_enabled": true,
+  "night_start": "22:00",
+  "night_end": "06:00",
+  "night_fan_max_pct": 35,
+  "manual_fan_pct": null,
+  "fan_mode": "auto",
+  "fan_table": [[15, 25], [35, 45], [55, 70], [9999, 100]],
+  "field_test": false,
+  "filter_reset_ts": 1730000000,
+  "updated_ts": 1794383760,
+  "updated_by": "<uid>"
+}
+```
+- `pm_alert` / `pm_alert_min`: `pm_high` fires when `pm25_corrected` stays above `pm_alert` for `pm_alert_min` minutes.
+- `alert_cooldown_min`: one alert per `type` in this window. Discord uses the same `type` list and the same limit.
+- `night_*`: while night mode is on, the fan stays at or below `night_fan_max_pct`.
+- `manual_fan_pct` is only used when `fan_mode` is `manual`; `manual` with `null` = `auto`.
+- `fan_table`: `[pm25_corrected upper bound, fan_pct]`, sorted ascending (same table as `decision.py`).
+- `field_test`: the 24-hour test flag for Node 2 (see CLAUDE.md).
+
+### Notification channels
+
+Each channel (a name such as `discord`) has two parts, so a new channel needs no new paths:
+
+| Part | Path | Written by | Read by |
+|---|---|---|---|
+| Secret | `deviceSecrets/(deviceId)/(channel)` | owner, from the dashboard, any time | the unit's device account only (the owner cannot read it back) |
+| Status and options | `config.notify.(channel)` | owner | dashboard, uploader |
+
+The secret sits outside `devices/(deviceId)/` on purpose: the owner can read everything under `devices/(deviceId)/`, and a database rule can only add read access to a child, never take it away.
+
+```ts
+interface NotifyChannel {
+  enabled: boolean;
+  set_ts: unix_seconds;      // unix seconds when the owner last saved the secret
+  hint: string;        // last 4 characters of the secret
+}
+```
+```json
+{
+  "discord": { "enabled": true, "set_ts": 1794383760, "hint": "a1B2" }
+}
+```
+- `enabled`: the unit sends alerts to this channel only when `true` and a secret exists.
+- `set_ts`: the uploader re-reads the secret when this changes, so a new webhook works within seconds without a restart.
+- `hint`: lets the dashboard show "set, ends with a1B2" without reading the secret.
+
+Owner flow on the dashboard (Settings, notifications): paste the webhook URL, Save (writes `deviceSecrets/(deviceId)/discord`, then `config.notify.discord` with `enabled`, `set_ts`, `hint`), Send test (`ui_cmd` `test_notify`), Remove (deletes the secret, sets `enabled: false`). The dashboard never shows the full URL after saving.
+
+`deviceSecrets/(deviceId)/discord` is a string that starts with `https://discord.com/api/webhooks/`. The uploader falls back to `DISCORD_WEBHOOK_URL` in the Jetson `.env` when no secret exists (bench and development).
+
+**`ui_cmd/{push_id}`**: the uploader handles it, then **deletes** it (an unknown `cmd` is deleted without effect). The dashboard treats "gone" as "received".
+```ts
+interface UiCmd {
+  ts: unix_seconds;
+  by: string;          // uid
+  cmd: "confirm_present" | "reset_fault" | "reset_filter" | "aim_person" | "survey_now" | "test_notify";
+  channel?: string;    // test_notify only
+}
+```
+```json
+{ "ts": 1794383760, "by": "<uid>", "cmd": "confirm_present" }
+```
+
+| `cmd` | Effect |
+|---|---|
+| `confirm_present` | counts as "person seen" for 15 min from its `ts` (the app confirm in the charge rule) |
+| `reset_fault` | clears a Node 2 FAULT if its cause is gone |
+| `reset_filter` | new filter: `filter_hours` = 0, record a new RPM baseline |
+| `aim_person` | turn to the nearest person now (same as the voice command) |
+| `survey_now` | run a survey and update the dust cause now |
+| `test_notify` | send a test message to one channel: `{ "cmd": "test_notify", "channel": "discord" }` |
+
+**`feedback/{push_id}`**: the "ไม่ใช่" button. The uploader copies it into the SQLite accuracy table and leaves it in Firebase.
+```ts
+interface Feedback {
+  ts: unix_seconds;
+  by: string;              // uid
+  cause_id: string;
+  cause_ts: unix_seconds;
+  correct: boolean;
+  true_cause?: string;     // optional
+}
+```
+```json
+{
+  "ts": 1794383760,
+  "by": "<uid>",
+  "cause_id": "c1794383760",
+  "cause_ts": 1794383760,
+  "correct": false,
+  "true_cause": "incense_candle"
+}
+```
 
 ---
 
-## Proposed MQTT additions (need team OK before merge)
+## MQTT additions for the dashboard
 
-The dashboard needs these. They add to the MQTT table above, they do not change it.
+These add to the MQTT table above and leave it unchanged.
 
-1. **`ab/node2/telemetry` + `mode`, `fault`.** CLAUDE.md says Node 2 reports `mode` (`IDLE` · `DOCKED` · `CHARGING` · `FULL` · `FAULT` · `FIELD_TEST`) in every message, but the table only has `docked` / `charging`. `fault` ∈ `null` · `over_current` · `over_temp` · `timer`.
-2. **`ab/node1/telemetry` + `batt_temp_c`, `fan_pct`.** CLAUDE.md already uses `ab/node1/telemetry.batt_temp_c` for the charge rule. `fan_pct` lets health compare RPM against the commanded speed.
-3. **`ab/gw/cause` + `id`, `source`.** The spec text already says `source: rules|cloud`. `id` links the "ไม่ใช่" feedback to one result.
-4. **`ab/gw/state.alerts[]`**: strings (`"pm25_high"`) as in the contract, or `{type, severity, msg, since}`; the uploader stores only the type in `state.alerts` and turns each new one into an `alerts/(id)` record.
-5. **`ab/gw/health`** is in the spec (§4 health.py, every 10 s) but not in the table. Payload = the `health` fields above.
-6. **`ab/gw/config`** (retained): uploader publishes the current `config` so `decision.py` gets web changes.
-7. ~~`ab/gw/ui_cmd`~~ dropped: the contract has no `ui_cmd` path.
-8. **`ab/node2/cmd` + optional `field_test`, `reset_fault`**: e.g. `{seq, ts, charge_allowed, reason, field_test: true}` or `{seq, ts, charge_allowed, reason, reset_fault: true}`, so the web settings and buttons reach the box.
-
-9. **`ab/gw/alert`**: one-off alerts from modules that are not the brain, payload
-   `{ts, type, severity, msg, source}`. The uploader writes each one to `alerts/(id)` as `{ts, level, title, text}`. Today only `uart_bridge`
-   uses it (`uart_fail` after 3 retries), so `decision.py` should not also add `uart_fail` to `state.alerts`.
-10. **`ab/gw/uploader`**: `{ts, outbox_pending, last_upload_ts, last_error}` every 10 s, for `health.py`.
-11. **UART heartbeat line** = `{"cmd":"hb","ts":..}` every 500 ms, no ACK. Every other command line carries the
-    bridge's own `seq`, and Node 1 answers `{"ack":<seq>}`. The bridge then publishes `ab/node1/ack {ack_seq}`
-    with the seq the MQTT sender used.
-12. **Vision and dust-cause topics** (gateway-internal, used by Komet's modules):
-    - `ab/gw/vision` + `surveying` (bool): `decision.py` should not send `aim` while it is true.
-    - `ab/gw/vision/cmd`: `{"cmd": "snapshot", "tag": ...}` or `{"cmd": "survey", "reason": ...}` (from `decision.py` or voice).
-    - `ab/gw/vision/snapshot`: `{ts, path, tag, person_present}` after each snapshot (path is local to the Jetson).
-    - `ab/gw/vision/survey`: `{ts, snapshots: [paths], reason}` when a survey ends.
-    - `ab/gw/cause/request`: `{ts, reason}` asks `cause_rules` for a fresh answer (survey end, voice "ทำไมฝุ่นเยอะ").
-    - `ab/gw/cause` + `id`, `source`, `features` (rules), `reason`, and for cloud answers `rules_cause`, `rules_confidence`.
-      The uploader sends only the contract fields to Firebase.
+1. **`ab/node2/telemetry` + `mode`, `fault`.** `mode` ∈ `IDLE` · `DOCKED` · `CHARGING` · `FULL` · `FAULT` · `FIELD_TEST`; `fault` ∈ `null` · `over_current` · `over_temp` · `timer`.
+2. **`ab/node1/telemetry` + `batt_temp_c`, `fan_pct`.** `batt_temp_c` feeds the charge rule. `fan_pct` lets health compare RPM against the commanded speed.
+3. **`ab/gw/cause` + `id`, `source`.** `source` ∈ `rules` · `cloud`. `id` links the "ไม่ใช่" feedback to one result.
+4. **`ab/gw/state.alerts[]` item** = `StateAlert` (types in the table above).
+5. **`ab/gw/health`**, every 10 s: `HealthRecord` without `pending_rows` and `last_upload_ts` (the uploader adds those and sets `ts`).
+6. **`ab/gw/config`** (retained): the uploader publishes the current `config` so `decision.py` gets web changes.
+7. **`ab/gw/ui_cmd`**: the uploader publishes each `ui_cmd` record; `decision.py` / `health.py` act on it.
+8. **`ab/node2/cmd` + optional `field_test`, `reset_fault`**, so the web settings and buttons reach the box:
+   ```ts
+   type Node2CmdExtra = { field_test?: boolean; reset_fault?: boolean };   // sent with Node2Cmd
+   ```
+9. **`ab/gw/alert`**: one-off alerts from modules other than the brain, `{ ts, type, level, title, text }`; the uploader writes each to `alerts/{key}`. Only the UART bridge uses it (`uart_fail`), so `decision.py` must not also put `uart_fail` in `state.alerts`.
+10. **`ab/gw/uploader`**, every 10 s, for `health.py`:
+    ```ts
+    interface GwUploader {
+      ts: unix_seconds;
+      outbox_pending: integer;
+      last_upload_ts: unix_seconds;
+      last_error: string | null;
+    }
+    ```
