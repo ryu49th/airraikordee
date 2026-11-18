@@ -220,6 +220,30 @@ class FirebaseRest(object):
                 continue
             return r.status_code, r.text[:300]
 
+    def get(self, path):
+        """GET devices/<id>/<path>. Returns (status_code, parsed JSON or error text); (None, text) on errors."""
+        url = self.url[:-len(".json")] + "/" + path.strip("/") + ".json"
+        for attempt in (1, 2):
+            params = None
+            if self.auth is not None:
+                token = self.auth.token()
+                if token is None:
+                    return None, "device sign-in failed"
+                params = {"auth": token}
+            try:
+                r = self.session.get(url, params=params, timeout=self.timeout)
+            except Exception as e:
+                return None, str(e)
+            if r.status_code == 401 and self.auth is not None and attempt == 1:
+                self.auth.invalidate()
+                continue
+            if r.status_code != 200:
+                return r.status_code, r.text[:300]
+            try:
+                return 200, r.json()
+            except ValueError:
+                return None, "bad JSON from Firebase"
+
 
 def build_updates(rows):
     """Rows (oldest first) -> one multi-path update. A later row for the same path wins."""
