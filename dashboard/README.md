@@ -21,6 +21,11 @@ Opening `index.html` straight from Finder does not work (ES modules need http).
 Firebase console → Project settings → Your apps. `config.js` is git-ignored. Sign in with an owner account,
 then claim a unit with the code on its sticker.
 
+**Skip the login while testing:** after one owner account has claimed the unit, add
+`export const devLogin = { email: "...", password: "..." };` to your own `public/config.js` (git-ignored) and
+the page signs in by itself. Use a throwaway test account. Login cannot be removed for real: the database
+rules only let a signed-in owner read a unit (E5).
+
 **Deploy (DB-12):** `npm i -g firebase-tools`, `firebase login`, then from `dashboard/`:
 `firebase deploy --only hosting --project airraikordee`. Make sure `public/config.js` exists first.
 

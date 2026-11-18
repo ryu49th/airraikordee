@@ -10,3 +10,8 @@ export const firebaseConfig = {
   projectId: "airraikordee",
   appId: "",
 };
+
+// Optional, for testing on your own computer only: sign in automatically with a test owner account
+// (one that has already claimed a unit), so the page opens straight to the data.
+// Use a throwaway test account, never your real password. config.js is git-ignored; keep it that way.
+// export const devLogin = { email: "test-owner@example.com", password: "..." };

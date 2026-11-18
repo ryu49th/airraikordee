@@ -25,7 +25,9 @@ async function boot() {
   let config = null;
   if (!params.has("demo")) {
     try {
-      config = (await import("../config.js")).firebaseConfig;
+      const mod = await import("../config.js");
+      config = mod.firebaseConfig;
+      ui.devLogin = mod.devLogin && mod.devLogin.email && mod.devLogin.password ? mod.devLogin : null;
     } catch (e) {
       config = null;   // no config.js yet -> demo mode
     }
@@ -56,6 +58,18 @@ function show(viewId) {
 async function onAuth(user) {
   stopDevice();
   ui.user = user;
+  if (!user && ui.devLogin && !ui.autoTried) {
+    // Development only: config.js (git-ignored) holds a test owner login, so the page opens straight to the data.
+    ui.autoTried = true;
+    show("loading");
+    $("loading").textContent = "กำลังเข้าสู่ระบบอัตโนมัติ (บัญชีทดสอบใน config.js)…";
+    try {
+      await ui.store.signIn(ui.devLogin.email, ui.devLogin.password);
+      return;   // onAuth runs again with the user
+    } catch (err) {
+      setText("login-error", "เข้าสู่ระบบอัตโนมัติไม่ได้: " + errorText(err));
+    }
+  }
   if (!user) {
     $("device-select").hidden = true;
     show("view-login");
