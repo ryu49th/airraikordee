@@ -480,7 +480,11 @@ function wireStatic() {
     try {
       const c = await ui.store.get("claims/" + code);
       if (!c || !c.deviceId) throw new Error("ไม่พบรหัสนี้");
-      if (c.used) throw new Error("รหัสนี้ถูกใช้ไปแล้ว");
+      if (c.used === true) throw new Error("รหัสนี้ถูกใช้ไปแล้ว");
+      if (c.used !== false) {
+        // e.g. "false" typed with quotes in the console is a string, which the rules will not accept
+        throw new Error("ค่า used ของรหัสนี้ใน Firebase เป็น " + JSON.stringify(c.used) + " ต้องเป็น false (boolean ไม่มีเครื่องหมายคำพูด)");
+      }
       await ui.store.set("users/" + ui.user.uid + "/devices/" + c.deviceId, { code });
       await ui.store.update("claims/" + code, { used: true });
       claim.reset();
