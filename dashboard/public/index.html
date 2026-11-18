@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AirRaiKorDee</title>
+  <meta name="theme-color" content="#0f766e">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%230f766e'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span>AirRaiKorDee</span>
+      <span id="demo-badge" class="badge" hidden>โหมดตัวอย่าง</span>
+    </div>
+    <div class="topbar-right">
+      <select id="device-select" aria-label="เลือกเครื่อง" hidden></select>
+      <span id="conn" class="conn" title="สถานะข้อมูลจากเครื่อง"></span>
+    </div>
+  </header>
+
+  <nav id="tabs" class="tabs" hidden>
+    <a href="#overview" data-tab="overview">ภาพรวม</a>
+    <a href="#history" data-tab="history">ประวัติ</a>
+    <a href="#charge" data-tab="charge">ที่ชาร์จ</a>
+    <a href="#alerts" data-tab="alerts">แจ้งเตือน</a>
+    <a href="#health" data-tab="health">สถานะระบบ</a>
+    <a href="#settings" data-tab="settings">ตั้งค่า</a>
+  </nav>
+
+  <main>
+    <p id="loading" class="center muted">กำลังโหลด…</p>
+
+    <!-- Sign in -->
+    <section id="view-login" class="card narrow" hidden>
+      <h1>เข้าสู่ระบบ</h1>
+      <form id="login-form">
+        <label>อีเมล <input name="email" type="email" autocomplete="username" required></label>
+        <label>รหัสผ่าน <input name="password" type="password" autocomplete="current-password" minlength="6" required></label>
+        <p id="login-error" class="error" role="alert"></p>
+        <div class="row">
+          <button type="submit" class="primary">เข้าสู่ระบบ</button>
+          <button type="button" id="signup-btn">สมัครใหม่</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Claim a unit -->
+    <section id="view-claim" class="card narrow" hidden>
+      <h1>เพิ่มเครื่อง</h1>
+      <p class="muted">ใส่รหัสบนสติกเกอร์ใต้เครื่อง เช่น AB12-CD34 รหัสใช้ได้ครั้งเดียว</p>
+      <form id="claim-form">
+        <label>รหัสเครื่อง <input name="code" autocomplete="off" placeholder="AB12-CD34" required></label>
+        <p id="claim-error" class="error" role="alert"></p>
+        <div class="row">
+          <button type="submit" class="primary">เพิ่มเครื่อง</button>
+          <button type="button" id="claim-cancel" hidden>ยกเลิก</button>
+          <button type="button" class="link" data-action="sign-out">ออกจากระบบ</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Overview -->
+    <section id="tab-overview" class="tab" hidden>
+      <div id="offline-banner" class="banner bad" hidden></div>
+      <div class="grid">
+        <article class="card hero" id="pm-card">
+          <h2>PM2.5 ในห้อง</h2>
+          <div class="pm-value"><span id="pm-value">–</span><small>µg/m³</small></div>
+          <div id="pm-band" class="band">–</div>
+          <p class="muted"><span id="pm-raw"></span></p>
+          <p class="muted small" id="pm-updated"></p>
+        </article>
+
+        <article class="card">
+          <h2>สภาพห้อง</h2>
+          <dl class="stats">
+            <div><dt>อุณหภูมิ</dt><dd id="env-temp">–</dd></div>
+            <div><dt>ความชื้น</dt><dd id="env-rh">–</dd></div>
+            <div><dt>ความกดอากาศ</dt><dd id="env-pressure">–</dd></div>
+            <div><dt>PM10</dt><dd id="pm10">–</dd></div>
+          </dl>
+        </article>
+
+        <article class="card">
+          <h2>เครื่องฟอก</h2>
+          <dl class="stats">
+            <div><dt>โหมด</dt><dd id="unit-mode">–</dd></div>
+            <div><dt>พัดลม</dt><dd id="fan">–</dd></div>
+            <div><dt>มีคนในห้อง</dt><dd id="person">–</dd></div>
+            <div><dt>ทิศหัวเครื่อง</dt><dd id="aim">–</dd></div>
+            <div><dt>แบตเตอรี่</dt><dd id="battery-mini">–</dd></div>
+          </dl>
+        </article>
+
+        <article class="card" id="cause-card">
+          <h2>สาเหตุฝุ่นล่าสุด</h2>
+          <p class="cause"><strong id="cause-label">–</strong> <span id="cause-conf" class="muted"></span></p>
+          <p id="cause-advice"></p>
+          <p class="muted small" id="cause-meta"></p>
+          <div id="cause-actions" class="row" hidden>
+            <button type="button" id="cause-yes">ใช่</button>
+            <button type="button" id="cause-no">ไม่ใช่สาเหตุนี้</button>
+          </div>
+          <form id="cause-fix" class="row" hidden>
+            <label>สาเหตุจริงคือ
+              <select name="true_cause"></select>
+            </label>
+            <button type="submit" class="primary">ส่ง</button>
+          </form>
+          <p id="cause-thanks" class="ok small" hidden>ขอบคุณ ส่งความเห็นแล้ว</p>
+        </article>
+
+        <article class="card wide">
+          <h2>แจ้งเตือนที่ยังเกิดอยู่</h2>
+          <ul id="active-alerts" class="alerts"></ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- History -->
+    <section id="tab-history" class="tab" hidden>
+      <article class="card">
+        <div class="row between">
+          <div class="seg" id="range-seg" role="group" aria-label="ช่วงเวลา">
+            <button type="button" data-range="1h" class="on">1 ชม.</button>
+            <button type="button" data-range="24h">24 ชม.</button>
+            <button type="button" data-range="7d">7 วัน</button>
+          </div>
+          <div class="seg" id="metric-seg" role="group" aria-label="ค่าที่แสดง">
+            <button type="button" data-metric="pm25" class="on">PM2.5</button>
+            <button type="button" data-metric="temp_c">อุณหภูมิ</button>
+            <button type="button" data-metric="rh">ความชื้น</button>
+            <button type="button" data-metric="fan_pct">พัดลม</button>
+          </div>
+        </div>
+        <div id="chart" class="chart-box"></div>
+        <dl class="stats" id="history-stats"></dl>
+        <p class="muted small" id="history-note"></p>
+      </article>
+    </section>
+
+    <!-- Charging box -->
+    <section id="tab-charge" class="tab" hidden>
+      <article class="card">
+        <h2>ที่ชาร์จ</h2>
+        <p><span id="box-mode" class="pill">–</span> <span id="box-plugged" class="muted"></span></p>
+        <div class="meter" aria-label="แบตเตอรี่"><div id="batt-bar"></div></div>
+        <p class="pm-value small-value"><span id="batt-pct">–</span><small>%</small></p>
+        <dl class="stats">
+          <div><dt>แรงดัน</dt><dd id="box-v">–</dd></div>
+          <div><dt>กระแส</dt><dd id="box-i">–</dd></div>
+          <div><dt>อุณหภูมิแบต</dt><dd id="box-batt-temp">–</dd></div>
+          <div><dt>อุณหภูมิในกล่อง</dt><dd id="box-temp">–</dd></div>
+        </dl>
+        <p id="box-fault" class="error" hidden></p>
+        <p class="muted small" id="box-updated"></p>
+        <p class="muted small">ชาร์จได้เฉพาะเมื่อมีคนอยู่ในห้องภายใน 15 นาที และแบตไม่ร้อนเกิน 45 °C (กติกาความปลอดภัย)</p>
+      </article>
+    </section>
+
+    <!-- Alerts -->
+    <section id="tab-alerts" class="tab" hidden>
+      <article class="card">
+        <h2>ประวัติแจ้งเตือน</h2>
+        <ul id="alert-list" class="alerts"></ul>
+      </article>
+    </section>
+
+    <!-- Health -->
+    <section id="tab-health" class="tab" hidden>
+      <article class="card">
+        <h2>สถานะระบบ</h2>
+        <dl class="stats">
+          <div><dt>Node 1 เครื่องฟอก</dt><dd id="h-node1">–</dd></div>
+          <div><dt>Node 2 ที่ชาร์จ</dt><dd id="h-node2">–</dd></div>
+          <div><dt>Jetson CPU</dt><dd id="h-cpu">–</dd></div>
+          <div><dt>รออัปโหลด</dt><dd id="h-pending">–</dd></div>
+          <div><dt>อัปโหลดล่าสุด</dt><dd id="h-upload">–</dd></div>
+          <div><dt>ไส้กรองใช้ไป</dt><dd id="h-filter">–</dd></div>
+          <div><dt>เซนเซอร์ฝุ่นใช้ไป</dt><dd id="h-pms">–</dd></div>
+          <div><dt>เปลี่ยนไส้กรองล่าสุด</dt><dd id="h-filter-reset">–</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <!-- Settings -->
+    <section id="tab-settings" class="tab" hidden>
+      <article class="card">
+        <h2>ตั้งค่าเครื่อง</h2>
+        <form id="config-form">
+          <label>แจ้งเตือนเมื่อ PM2.5 เกิน (µg/m³)
+            <input name="pm_alert" type="number" min="5" max="500" step="1" required>
+            <span class="error" data-err="pm_alert"></span>
+          </label>
+          <fieldset>
+            <legend>พัดลม</legend>
+            <label class="inline"><input type="radio" name="fan_mode" value="auto"> อัตโนมัติตามฝุ่น</label>
+            <label class="inline"><input type="radio" name="fan_mode" value="manual"> กำหนดเอง</label>
+            <label id="manual-fan-row">ความแรง <output id="manual-fan-out">0</output>%
+              <input name="manual_fan_pct" type="range" min="0" max="100" step="5">
+              <span class="error" data-err="manual_fan_pct"></span>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>โหมดกลางคืน (พัดลมเบาลง)</legend>
+            <div class="row">
+              <label>เริ่ม <input name="night_start" type="time" required></label>
+              <label>สิ้นสุด <input name="night_end" type="time" required></label>
+            </div>
+            <span class="error" data-err="night_start"></span><span class="error" data-err="night_end"></span>
+          </fieldset>
+          <div class="row">
+            <button type="submit" class="primary">บันทึก</button>
+            <span id="config-status" class="small"></span>
+          </div>
+        </form>
+      </article>
+
+      <article class="card">
+        <h2>ไส้กรอง</h2>
+        <p class="muted">กดหลังเปลี่ยนไส้กรองใหม่ เครื่องจะเริ่มนับชั่วโมงใหม่</p>
+        <button type="button" id="filter-reset">เปลี่ยนไส้กรองแล้ว</button>
+        <span id="filter-status" class="small"></span>
+      </article>
+
+      <article class="card">
+        <h2>บัญชี</h2>
+        <p class="muted" id="account-email"></p>
+        <div class="row">
+          <button type="button" id="add-device">เพิ่มเครื่อง</button>
+          <button type="button" data-action="sign-out">ออกจากระบบ</button>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
