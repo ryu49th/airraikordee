@@ -49,6 +49,15 @@ config_listener:
   timeout_s: 10
   cache_file: config_cache.json     # inside data_dir; last good settings for a boot without internet
 
+# --- health/health.py: node timeouts, Jetson load, filter hours -> ab/gw/health ---
+health:
+  node_offline_s: 30                # a node is offline after this long without a message (AIR-21)
+  publish_every_s: 10               # heartbeat; also sent at once when a node goes on/offline
+  disk_warn_pct: 85
+  baseline_hours: 1.0               # learn fan RPM per fan % during the first hour of a new filter
+  save_every_s: 60
+  state_file: health_state.json     # inside data_dir: filter/PMS hours and the RPM baseline
+
 # --- brain/decision.py (spec section 4) ---
 decision:
   pm_alert: 35                      # µg/m³; default until the dashboard sets config.pm_alert
