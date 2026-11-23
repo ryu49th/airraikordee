@@ -82,7 +82,7 @@ sim's `fan_pct` follows within ~5 s.
 ## Health (health.py)
 - A node is **offline after 30 s** without any message; `ab/gw/health` goes out every 10 s and at once on a change,
   so the uploader and the dashboard see it within ~30 s (the uploader writes `health` to Firebase every
-  `uploader.health_every_s`, 30 s now; lower it to 10 if the dashboard must show it sooner).
+  `uploader.health_every_s`, 10 s, so the dashboard shows a dead node within ~40 s).
 - `cpu_temp_c` from `/sys/class/thermal` (`CPU-therm` on the Nano; the fake `PMIC-Die` zone is skipped),
   `ram_pct` from `/proc/meminfo`, `disk_pct` of `data_dir`; a warning is logged above 85 %.
 - `filter_hours` counts while Node 1 is online and the fan turns; `pms_hours` while PM readings arrive. A newer

@@ -38,7 +38,7 @@ uploader:
     telemetry/node2/latest: 1
     env/latest: 1
     state: 1
-  health_every_s: 30
+  health_every_s: 10                # health.py marks a node offline after 30 s; 10 keeps the dashboard within AIR-21
   node_offline_s: 30                # node*_online = false after this long without telemetry
 
 # --- cloud/config_listener.py: dashboard settings (devices/<DEVICE_ID>/config) -> ab/gw/config ---
