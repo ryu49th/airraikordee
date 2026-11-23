@@ -131,3 +131,23 @@ Both sims also send the fields proposed in `docs/protocol.md` (`batt_temp_c`, `f
 Remove them if the team rejects the proposal.
 
 With sim_node1 running, do not also run `uart_bridge` (both would answer `ab/node1/cmd`).
+
+### Known limits (the real Node 2 firmware must handle these)
+
+The sim models the charge rules in CLAUDE.md, and two of them do not work as written once the unit is running
+while it charges. The sim hides both, so passing tests do not prove the real box is right.
+
+1. **FULL can't be detected from the INA226 alone.** The rule is "V ≥ 12.55 V and I < 150 mA for 60 s", but the
+   INA226 sits before the unit, so it measures charge current **plus** the unit's load (≈1.2 A for Jetson, fan and
+   motors). With the unit on, I never drops below 150 mA and the box never reaches FULL. The sim cheats: it compares
+   `charge_a` (charge current only, `sim_node2.py` line ~205), which the real box cannot see.
+   Options: subtract the load reported by Node 1, read pack current on the unit side, or detect FULL by the
+   current settling (no change for several minutes) instead of a fixed threshold.
+2. **The 4 h timer can trip on a normal charge.** The XL4015 limit (3 A) is shared with the load, so only
+   ≈1.8 A reaches the 3S2P pack (≈7 Ah). A charge from empty needs ≈3.9 h in CC plus the CV tail, so it can hit
+   the 4 h timer and latch FAULT. `test_charge_timer_fault` only shows that the timer works.
+   Options: scale the timer to the measured charge current, or raise it to ≈6 h and rely on the temperature and
+   over-current stops.
+
+Also: `est_percent` is `null` while the cable is unplugged, because the box only sees voltage through the cable.
+Battery level when unplugged has to come from Node 1.
