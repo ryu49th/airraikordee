@@ -14,7 +14,8 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 | `ai/cause_rules.py` | local dust-cause rules → `ab/gw/cause` (source rules) | done |
 | `ai/cause_cloud.py` | blurred survey photos → Claude (`claude-opus-5-5`, JSON answer) when the rules are unsure | done, needs `AI_API_KEY` |
 | `voice/voice.py` | wake word -> INMP441 clip from Node 1 -> Google STT -> command (keywords, Claude fallback) -> Google TTS on the speaker (AIR-20) | done, needs the keys + Node 1 audio frames |
-| `sensors/ brain/ notify/` | other modules | todo |
+| `notify/discord.py` | alerts (`ab/gw/alert`, `ab/gw/state`) -> Discord webhook, one per type per 15 min, blurred photo on PM alerts, 429 retry_after (AIR-52) | done, needs `DISCORD_WEBHOOK_URL` |
+| `sensors/ brain/` | other modules | todo |
 | `udev/99-airraikordee.rules` | stable `/dev/airraikordee-node1` name for Node 1 | done |
 | `tests/` | pytest, no hardware needed | |
 
@@ -46,6 +47,7 @@ python3 -m vision.vision
 python3 -m ai.cause_rules
 python3 -m ai.cause_cloud
 python3 -m voice.voice
+python3 -m notify.discord
 python3 -m pytest tests
 ```
 On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (both git-ignored).
@@ -93,6 +95,19 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
   until then in manual mode; in auto mode it lasts until `decision.py` (not written yet) picks a new speed.
 - Try it without the ESP32: `python3 -m tools.sim_node1 --voice-wav hello.wav` (16 kHz mono), run voice.py, press
   `w`. `--drop-audio 0.1` drops frames to test the resend.
+
+## Discord alerts (notify/discord.py, AIR-52)
+- Put the webhook in `.env`: Discord channel -> Edit Channel -> Integrations -> Webhooks -> New Webhook ->
+  Copy Webhook URL -> `DISCORD_WEBHOOK_URL=...` (the URL is the password: never in Git, chat or screenshots).
+  Check it with `python3 -m notify.discord --test`.
+- Sends every one-off alert on `ab/gw/alert` and every alert type that newly appears in `ab/gw/state.alerts`, as an
+  embed coloured by level (info blue, warn yellow, crit red). One message per alert type per 15 min
+  (`notify.discord.cooldown_min`); the rest are counted in the stats and still go to Firebase through the uploader.
+- `pm_high` gets the newest survey photo (at most 15 min old) with faces blurred on the Jetson; without OpenCV or
+  the face model no photo is sent at all.
+- HTTP 429 waits Discord's `retry_after`; other failures retry with backoff, up to 5 tries.
+- Alert sources today: `uart_fail` (uart_bridge) and `node_offline` (health.py, once when a node that was online
+  goes silent for 30 s). `pm_high` and the charge alerts come from `decision.py`, which is not written yet.
 
 ## Firebase (uploader)
 Paths and fields follow Farn's data contract (`docs/protocol.md` → "Firebase Realtime Database").

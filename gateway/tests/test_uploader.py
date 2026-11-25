@@ -154,7 +154,7 @@ def test_alert_record_matches_contract(outbox):
                                    "severity": "warn", "msg": "Node 1 ไม่ตอบคำสั่ง fan"})
     drain(up)
     (record,) = fb.under("alerts/").values()
-    assert record == {"ts": 1794383760, "level": "warn", "title": "Node 1 ไม่ตอบคำสั่ง",
+    assert record == {"ts": 1794383760, "type": "uart_fail", "level": "warn", "title": "Node 1 ไม่ตอบคำสั่ง",
                       "text": "Node 1 ไม่ตอบคำสั่ง fan"}
 
 

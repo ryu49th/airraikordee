@@ -2,6 +2,8 @@
 
 - Remembers when each node was last heard; a node is offline after node_offline_s (30 s) of silence.
 - Publishes ab/gw/health every publish_every_s (10 s), and at once when a node goes on- or offline.
+- When a node that was online goes offline, also publishes a node_offline alert on ab/gw/alert (level crit),
+  which the uploader stores and notify/discord.py sends.
 - Reads Jetson CPU temperature, RAM and disk use; logs a warning when the disk is above disk_warn_pct (85 %).
 - Counts filter hours (fan running) and PMS5003 hours (dust readings arriving), reset by a new
   config.filter_reset_ts from the dashboard (ab/gw/config), and the fan RPM ratio against a fresh filter.
@@ -21,12 +23,13 @@ import shutil
 import threading
 import time
 
-from common.protocol import (TOPIC_GW_CONFIG, TOPIC_GW_HEALTH, TOPIC_GW_STATE, TOPIC_NODE1_EVENT,
+from common.protocol import (TOPIC_GW_ALERT, TOPIC_GW_CONFIG, TOPIC_GW_HEALTH, TOPIC_GW_STATE, TOPIC_NODE1_EVENT,
                              TOPIC_NODE1_TELEMETRY, TOPIC_NODE2_TELEMETRY, now_ts)
 
 log = logging.getLogger("health")
 
 NODES = ("node1", "node2")
+NODE_NAMES = {"node1": "เครื่องฟอก (Node 1)", "node2": "กล่องชาร์จ (Node 2)"}
 
 
 # --- system readings (Linux / Jetson; None where a file is missing, e.g. on a Mac) --------------------
@@ -195,12 +198,16 @@ class Health(object):
         now = self.clock()
         with self._lock:
             self._count_hours(now)
-            changed = self._update_online(now)
+            changed, went_down = self._update_online(now)
             due = self._last_publish is None or now - self._last_publish >= self.publish_every_s
             msg = self._message(now) if (changed or due) else None
             if msg is not None:
                 self._last_publish = now
             save = self._last_save is None or now - self._last_save >= self.save_every_s
+        for node in went_down:
+            self.mqtt.publish(TOPIC_GW_ALERT, {
+                "ts": int(now), "type": "node_offline", "level": "crit", "title": "อุปกรณ์ออฟไลน์",
+                "text": "%s ไม่ส่งข้อมูลมา %.0f วินาที" % (NODE_NAMES.get(node, node), self.offline_s)})
         if msg is not None:
             self._check_disk(msg["disk_pct"])
             self.mqtt.publish(TOPIC_GW_HEALTH, msg)
@@ -210,7 +217,9 @@ class Health(object):
         return msg
 
     def _update_online(self, now):
+        """Returns (anything changed, nodes that just went from online to offline)."""
         changed = False
+        went_down = []
         for node in NODES:
             seen = self.last_seen[node]
             up = seen is not None and now - seen < self.offline_s
@@ -221,7 +230,8 @@ class Health(object):
                     log.info("%s online", node)
                 else:
                     log.warning("%s offline (no message for %.0f s)", node, self.offline_s)
-        return changed
+                    went_down.append(node)
+        return changed, went_down
 
     def _count_hours(self, now):
         last, self._last_count = self._last_count, now
