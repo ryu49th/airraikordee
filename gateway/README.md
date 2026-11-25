@@ -112,6 +112,10 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
   (`latency_s` = wake -> reply, for the metrics table).
 - Manual fan from the dashboard (config_listener) re-sends its speed every 60 s, so a voice fan change lasts
   until then in manual mode; in auto mode it lasts until `decision.py` (not written yet) picks a new speed.
+- **Type instead of speaking:** `python3 -m voice.voice --chat` asks for a command and prints the unit's reply
+  and the MQTT commands it would send (nothing is sent). Add `--live` to really send them, e.g. with
+  `tools.sim_node1` running. Needs no microphone, speaker or Google key; Claude (for sentences without a keyword)
+  needs `AI_API_KEY`.
 - Try it without the ESP32: `python3 -m tools.sim_node1 --voice-wav hello.wav` (16 kHz mono), run voice.py, press
   `w`. `--drop-audio 0.1` drops frames to test the resend.
 
