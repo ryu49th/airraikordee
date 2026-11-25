@@ -61,4 +61,12 @@ Tests: `node --test dashboard/test/*.test.mjs` (Node 18+).
   or `feedback`, and writes `state.alerts` as type strings; the dashboard accepts both strings and objects.
 - **7 days**: `limitToLast(10080)` downloads ~10k rows. If it is slow, add the hourly history the contract
   mentions and point the 7-day view at it.
-- LINE linking (A-09…A-12) and buttons that need `ui_cmd` (only in PR #3, not in the contract).
+- LINE linking (A-09…A-12).
+- Saving the Discord webhook from the web (`deviceSecrets`, protocol.md): the webhook lives in the Jetson `.env` for now.
+
+## Buttons that reach the unit (ui_cmd)
+"หันมาหาฉัน" (overview), "หาสาเหตุตอนนี้" (dust cause), "ฉันอยู่ในห้อง ชาร์จได้" and "รีเซ็ตกล่องชาร์จ" (charging),
+"ส่งข้อความทดสอบ" (Discord, settings) each push `{ts, by, cmd}` to `devices/(id)/ui_cmd`. The Jetson's
+config_listener publishes it on MQTT and deletes the entry, so the page shows "เครื่องรับคำสั่งแล้ว" when the entry is
+gone, or a timeout note after 20 s. In demo mode a fake unit deletes it after 1.5 s.
+
