@@ -321,3 +321,15 @@ def test_tts_cache_and_prepare(tmp_path):
     assert made == total - 1 and s.calls == total
     offline = GoogleTts("", s, DEFAULTS, str(tmp_path / "cache"))
     assert offline.synthesize(REPLIES["offline"])  # cached: works without a key or internet
+
+
+def test_night_mode_runs_commands_without_speaking():
+    from common.protocol import TOPIC_GW_STATE
+    v, mqtt, tts, _ = make("หยุด")
+    v.on_state(TOPIC_GW_STATE, {"mode": "night"})
+    v.on_event(None, {"type": "wake"})
+    r = v.handle_clip(1, b"", 16000)
+    assert len(cmds(mqtt, "stop")) == 1 and tts.said == [] and v.player.played == [] and r["reply"] == REPLIES["stop"]
+    v.on_state(TOPIC_GW_STATE, {"mode": "idle"})
+    v.handle_clip(2, b"", 16000)
+    assert tts.said == [REPLIES["stop"]]

@@ -27,6 +27,8 @@ Audio frames, Node 1 -> Jetson, one JSON object per line on the serial link:
   keeps every line under uart_bridge's 4096-byte limit. 16 kHz x 16 bit = 32 kB/s, which needs the ESP32-S3's
   native USB (USB CDC); the 115200-baud UART port is too slow.
 
+Night mode (ab/gw/state mode "night", from decision.py): no chime and no spoken reply; commands still run.
+
 Publishes ab/gw/voice {ts, sid, text, intent, source, reply, ok, latency_s} after each command (metrics).
 
 Keys in .env: STT_API_KEY and TTS_API_KEY (one Google Cloud API key may serve both, with the Speech-to-Text and
@@ -48,7 +50,7 @@ import threading
 import time
 import wave
 
-from common.protocol import (TOPIC_GW_CAUSE, TOPIC_GW_VISION, TOPIC_NODE1_AUDIO, TOPIC_NODE1_CMD,
+from common.protocol import (TOPIC_GW_CAUSE, TOPIC_GW_STATE, TOPIC_GW_VISION, TOPIC_NODE1_AUDIO, TOPIC_NODE1_CMD,
                              TOPIC_NODE1_EVENT, TOPIC_NODE1_TELEMETRY, SeqCounter, now_ts)
 
 log = logging.getLogger("voice")
@@ -481,6 +483,7 @@ class Voice(object):
         self._cause_event = threading.Event()
         self._wake_at = {}
         self.busy = False
+        self.night = False
         self.stats = {"wakes": 0, "clips": 0, "dropped": 0, "commands": 0, "llm": 0, "errors": 0}
 
     # --- lifecycle ---
@@ -491,6 +494,7 @@ class Voice(object):
         self.mqtt.subscribe(TOPIC_NODE1_TELEMETRY, self.on_telemetry, qos=0)
         self.mqtt.subscribe(TOPIC_GW_VISION, self.on_vision, qos=0)
         self.mqtt.subscribe(TOPIC_GW_CAUSE, self.on_cause)
+        self.mqtt.subscribe(TOPIC_GW_STATE, self.on_state, qos=0)
         for target in (self._worker, self._ticker):
             t = threading.Thread(target=target, name=target.__name__, daemon=True)
             t.start()
@@ -525,6 +529,8 @@ class Voice(object):
         self.stats["wakes"] += 1
         self._wake_at["last"] = self.clock()
         log.info("wake word")
+        if self.night:
+            return  # quiet at night: no chime
         threading.Thread(target=self.player.play_bytes, args=(chime_wav(), "chime.wav"), daemon=True).start()
 
     def on_audio(self, topic, msg):
@@ -540,6 +546,12 @@ class Voice(object):
         with self._lock:
             self._vision = msg
             self._vision_at = self.clock()
+
+    def on_state(self, topic, msg):
+        night = msg.get("mode") == "night"
+        if night != self.night:
+            log.info("night mode %s: replies %s", "on" if night else "off", "muted" if night else "spoken")
+        self.night = night
 
     def on_cause(self, topic, msg):
         with self._lock:
@@ -683,6 +695,9 @@ class Voice(object):
         return self.say_text(REPLIES[key])
 
     def say_text(self, text):
+        if self.night:
+            log.info("night, not spoken: %s", text)
+            return text
         try:
             path = self.tts.synthesize(text)
         except CloudError as e:

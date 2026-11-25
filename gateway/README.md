@@ -107,6 +107,7 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
   `python3 -m voice.voice --prepare` once while online; after that the unit can still say "no internet" and the
   dust advice offline. `--say "ข้อความ"` speaks one sentence, `--wav file.wav` runs one recording through STT.
 - Speaker: find the card with `aplay -l`, then set `voice.player: aplay -q -D plughw:<card>,0` in `config.yaml`.
+- In night mode (`ab/gw/state.mode == "night"`) there is no chime and no spoken reply; the command still runs.
 - Each command publishes `ab/gw/voice {ts, sid, text, intent, source, reply, ok, latency_s}`
   (`latency_s` = wake -> reply, for the metrics table).
 - Manual fan from the dashboard (config_listener) re-sends its speed every 60 s, so a voice fan change lasts
@@ -180,6 +181,12 @@ gone). Unknown commands and entries older than 10 min are deleted without effect
 | `aim_person` | decision.py | turns straight to the nearest person the camera sees |
 | `survey_now` | decision.py | `ab/gw/vision/cmd {cmd: survey}` |
 | `test_notify` | notify/discord.py | one test message now, ignoring the cooldown |
+
+## Dust-cause accuracy (ai/feedback.py)
+The "ใช่ / ไม่ใช่" buttons on the dashboard write `devices/<id>/feedback`. The config_listener process copies each
+new entry every 60 s into `data_dir/cause_log.db` together with the cause the user saw (it records every
+`ab/gw/cause`). `python3 -m tools.accuracy_report` prints the table for the report (rated / correct per source,
+and which causes were mistaken for which).
 
 ## Health (health.py)
 - A node is **offline after 30 s** without any message; `ab/gw/health` goes out every 10 s and at once on a change,
