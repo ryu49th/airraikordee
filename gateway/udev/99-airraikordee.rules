@@ -1,0 +1,10 @@
+# Stable name for Node 1 so the bridge never depends on ttyACM0 vs ttyACM1.
+# Install:  sudo cp udev/99-airraikordee.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+# Check the real IDs first with:  udevadm info -a -n /dev/ttyACM0 | grep -E 'idVendor|idProduct'
+
+# ESP32-S3 native USB port (USB-CDC / JTAG)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", SYMLINK+="airraikordee-node1", MODE="0660", GROUP="dialout"
+
+# If Node 1 is plugged into the DevKitC "UART" port instead, enable the line for its USB-serial chip:
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", SYMLINK+="airraikordee-node1", MODE="0660", GROUP="dialout"  # CH343
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="airraikordee-node1", MODE="0660", GROUP="dialout"  # CP2102
