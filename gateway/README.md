@@ -8,11 +8,12 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 | `bridge/uart_bridge.py` | Node 1 USB serial <-> MQTT, ACK/retry, heartbeat, auto-reconnect | done |
 | `cloud/uploader.py` | MQTT -> SQLite outbox -> Firebase REST under `devices/<id>`, device-account login, backoff (E4) | done (uplink) |
 | `cloud/config_listener.py` | Firebase `devices/<id>/config` (dashboard Settings) -> `ab/gw/config` (retained) + manual fan to Node 1 (AIR-97) | done |
+| `health/health.py` | node on/offline (30 s), CPU temp / RAM / disk, filter and PMS hours, fan RPM ratio -> `ab/gw/health` every 10 s (AIR-21) | done |
 | `tools/sim_node1.py`, `tools/sim_node2.py` | fake nodes, see below | done |
 | `vision/vision.py` | webcam + detectNet → `ab/gw/vision` (pan/tilt error, distance) 5 Hz; snapshots; 8-direction survey | done, needs the camera |
 | `ai/cause_rules.py` | local dust-cause rules → `ab/gw/cause` (source rules) | done |
 | `ai/cause_cloud.py` | blurred survey photos → Claude (`claude-opus-5-5`, JSON answer) when the rules are unsure | done, needs `AI_API_KEY` |
-| `sensors/ voice/ brain/ notify/ health/` | other modules | todo |
+| `sensors/ voice/ brain/ notify/` | other modules | todo |
 | `udev/99-airraikordee.rules` | stable `/dev/airraikordee-node1` name for Node 1 | done |
 | `tests/` | pytest, no hardware needed | |
 
@@ -39,6 +40,7 @@ The gateway uses its own Mosquitto on **port 1884**, run as user `eiclite` witho
 python3 -m bridge.uart_bridge
 python3 -m cloud.uploader
 python3 -m cloud.config_listener
+python3 -m health.health
 python3 -m vision.vision
 python3 -m ai.cause_rules
 python3 -m ai.cause_cloud
@@ -76,6 +78,19 @@ Polls `devices/<DEVICE_ID>/config` every 5 s with the same device account and `.
   through `data_dir/config_cache.json`.
 Try it without hardware: run `tools.sim_node1` and the listener, set the fan to manual on the dashboard, and the
 sim's `fan_pct` follows within ~5 s.
+
+## Health (health.py)
+- A node is **offline after 30 s** without any message; `ab/gw/health` goes out every 10 s and at once on a change,
+  so the uploader and the dashboard see it within ~30 s (the uploader writes `health` to Firebase every
+  `uploader.health_every_s`, 10 s, so the dashboard shows a dead node within ~40 s).
+- `cpu_temp_c` from `/sys/class/thermal` (`CPU-therm` on the Nano; the fake `PMIC-Die` zone is skipped),
+  `ram_pct` from `/proc/meminfo`, `disk_pct` of `data_dir`; a warning is logged above 85 %.
+- `filter_hours` counts while Node 1 is online and the fan turns; `pms_hours` while PM readings arrive. A newer
+  `filter_reset_ts` in `ab/gw/config` (the dashboard's "new filter" button) resets `filter_hours`.
+- `fan_rpm_ratio` = RPM now / RPM at the same fan % during the first hour of the filter. A falling ratio means the
+  filter is clogging (the `filter_clogged` alert itself belongs to `decision.py`, AIR-15).
+- Counters are saved to `data_dir/health_state.json` every minute.
+- Logs: every module rotates its own file (5 MB x 3). For the broker log see `logrotate/airraikordee-mqtt.conf`.
 
 ## Simulators (no hardware needed)
 

@@ -38,7 +38,7 @@ uploader:
     telemetry/node2/latest: 2
     env/latest: 2
     state: 2
-  health_every_s: 30
+  health_every_s: 10                # health.py marks a node offline after 30 s; 10 keeps the dashboard within AIR-21
   node_offline_s: 30                # node*_online = false after this long without telemetry
 
 # --- cloud/config_listener.py: dashboard settings (devices/<DEVICE_ID>/config) -> ab/gw/config ---
@@ -48,6 +48,15 @@ config_listener:
   backoff_max_s: 60                 # slower polls while Firebase is unreachable
   timeout_s: 10
   cache_file: config_cache.json     # inside data_dir; last good settings for a boot without internet
+
+# --- health/health.py: node timeouts, Jetson load, filter hours -> ab/gw/health ---
+health:
+  node_offline_s: 30                # a node is offline after this long without a message (AIR-21)
+  publish_every_s: 10               # heartbeat; also sent at once when a node goes on/offline
+  disk_warn_pct: 85
+  baseline_hours: 1.0               # learn fan RPM per fan % during the first hour of a new filter
+  save_every_s: 60
+  state_file: health_state.json     # inside data_dir: filter/PMS hours and the RPM baseline
 
 # --- brain/decision.py (spec section 4) ---
 decision:

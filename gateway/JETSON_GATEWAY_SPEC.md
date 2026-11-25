@@ -83,7 +83,7 @@ All messages are JSON. Every telemetry/command carries `node_id`, `seq` (uint32,
   - `idle`: no person 10 min → fan by PM only, head faces room centre.
 - **Fan speed:** lookup on `pm25_corrected` (≤15→25 %, ≤35→45 %, ≤55→70 %, >55→100 %), clamp by mode.
 - **Charge permission (Node 2):** `charge_allowed = docked AND person_seen_within(15 min) AND temp_c < 45`. Publish on every change and every 60 s. The dock independently cuts charging on over-temp/over-current.
-- **Alerts:** PM > 55 for 10 min, node offline > 60 s, charging cut for temperature, battery < 25 %.
+- **Alerts:** PM > `pm_alert` (35, set on the dashboard) for 10 min, node offline > 30 s, charging cut for temperature, battery < 25 %.
 
 ### vision.py
 - Capture 640×480 via OpenCV/GStreamer at ~10 fps; run detectNet every frame (or every 2nd if slow).
