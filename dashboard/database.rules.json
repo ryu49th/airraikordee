@@ -1,0 +1,230 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      ".indexOn": ["linkcode"],   // the LINE bot finds a user by the code shown in the dashboard
+      "$uid": {
+        "linkcode": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isString() && newData.val().length <= 64"
+        },
+        "devices": {
+          ".read": "auth != null && auth.uid === $uid",
+          "$deviceId": {
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.exists() && root.child('claims').child(newData.child('code').val()).child('deviceId').val() === $deviceId && root.child('claims').child(newData.child('code').val()).child('used').val() === false",
+            ".validate": "newData.hasChildren(['code']) && newData.child('code').isString()",
+            "code": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          }
+        }
+      }
+    },
+
+    "claims": {
+      "$code": {
+        ".read": "auth != null && !auth.token.email.matches(/^device-.*@devices\\.airraikordee\\.example$/)",
+        ".write": "auth != null && data.exists() && data.child('used').val() === false && newData.child('used').val() === true && newData.child('deviceId').val() === data.child('deviceId').val() && root.child('users').child(auth.uid).child('devices').child(data.child('deviceId').val()).child('code').val() === $code",
+        ".validate": "newData.hasChildren(['deviceId', 'used'])",
+        "deviceId": { ".validate": "newData.isString()" },
+        "used": { ".validate": "newData.isBoolean()" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    "deviceSecrets": {
+      "$deviceId": {
+        ".read": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+        "$channel": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('devices').child($deviceId).exists()",
+          ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 300 && newData.val().beginsWith('https://discord.com/api/webhooks/'))"
+        }
+      }
+    },
+
+    "devices": {
+      "$deviceId": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('devices').child($deviceId).exists() || auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example')",
+
+        "telemetry": {
+          "$node": {
+            "latest": {
+              ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+              ".validate": "newData.hasChildren(['ts'])",
+              "ts": { ".validate": "newData.isNumber()" },
+              "pm25": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "pm25_corrected": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "pm10": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "fan_pct": { ".validate": "newData.val() == null || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)" },
+              "fan_rpm": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "pan_deg": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "tilt_deg": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "person": { ".validate": "newData.val() == null || newData.isBoolean()" },
+              "mode": { ".validate": "newData.val() == null || newData.isString()" },
+              "fault": { ".validate": "newData.val() == null || newData.isString()" },
+              "voltage": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "current_a": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "temp_c": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "batt_temp_c": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "plugged": { ".validate": "newData.val() == null || newData.isBoolean()" },
+              "est_percent": { ".validate": "newData.val() == null || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)" },
+              "$other": { ".validate": false }
+            }
+          }
+        },
+
+        "env": {
+          "latest": {
+            ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+            "ts": { ".validate": "newData.isNumber()" },
+            "temp_c": { ".validate": "newData.val() == null || newData.isNumber()" },
+            "rh": { ".validate": "newData.val() == null || newData.isNumber()" },
+            "pressure_hpa": { ".validate": "newData.val() == null || newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "state": {
+          ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+          "mode": { ".validate": "newData.isString()" },
+          "fan_pct": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "target": {
+            "pan_deg": { ".validate": "newData.isNumber()" },
+            "tilt_deg": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          },
+          "alerts": { ".validate": "true" },
+          "$other": { ".validate": false }
+        },
+
+        "history": {
+          "$series": {
+            ".indexOn": ["ts"],
+            "$key": {
+              ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+              "ts": { ".validate": "newData.isNumber()" },
+              "pm25": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "pm25_corrected": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "temp_c": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "rh": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "fan_pct": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          }
+        },
+
+        "cause": {
+          ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+          "latest": {
+            "ts": { ".validate": "newData.isNumber()" },
+            "cause": { ".validate": "newData.isString()" },
+            "confidence": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1" },
+            "source": { ".validate": "newData.val() == 'rules' || newData.val() == 'cloud'" },
+            "advice_th": { ".validate": "newData.isString()" },
+            "id": { ".validate": "newData.isString()" },
+            "pm25_corrected": { ".validate": "newData.val() == null || newData.isNumber()" },
+            "$other": { ".validate": false }
+          },
+          "history": {
+            "$id": {
+              "ts": { ".validate": "newData.isNumber()" },
+              "cause": { ".validate": "newData.isString()" },
+              "confidence": { ".validate": "newData.isNumber()" },
+              "source": { ".validate": "newData.isString()" },
+              "advice_th": { ".validate": "newData.isString()" },
+              "id": { ".validate": "newData.isString()" },
+              "pm25_corrected": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          }
+        },
+
+        "alerts": {
+          "$key": {
+            ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+            ".validate": "newData.hasChildren(['ts', 'level', 'title', 'text'])",
+            "ts": { ".validate": "newData.isNumber()" },
+            "type": { ".validate": "newData.isString()" },
+            "level": { ".validate": "newData.val() == 'info' || newData.val() == 'warn' || newData.val() == 'crit'" },
+            "title": { ".validate": "newData.isString()" },
+            "text": { ".validate": "newData.isString()" },
+            "sent_to": { ".validate": "true" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "health": {
+          ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
+          "node1_online": { ".validate": "newData.isBoolean()" },
+          "node2_online": { ".validate": "newData.isBoolean()" },
+          "node1_last_seen": { ".validate": "newData.val() == null || newData.isNumber()" },
+          "node2_last_seen": { ".validate": "newData.val() == null || newData.isNumber()" },
+          "cpu_temp_c": { ".validate": "newData.val() == null || newData.isNumber()" },
+          "ram_pct": { ".validate": "newData.val() == null || newData.isNumber()" },
+          "disk_pct": { ".validate": "newData.val() == null || newData.isNumber()" },
+          "pending_rows": { ".validate": "newData.isNumber()" },
+          "last_upload_ts": { ".validate": "newData.val() == null || newData.isNumber()" },
+          "filter_hours": { ".validate": "newData.isNumber()" },
+          "pms_hours": { ".validate": "newData.isNumber()" },
+          "fan_rpm_ratio": { ".validate": "newData.val() == null || newData.isNumber()" },
+          "$other": { ".validate": false }
+        },
+
+        "config": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('devices').child($deviceId).exists()",
+          "pm_alert": { ".validate": "newData.isNumber() && newData.val() >= 5 && newData.val() <= 500 && newData.val() % 1 == 0" },
+          "pm_alert_min": { ".validate": "newData.isNumber() && newData.val() >= 1" },
+          "alert_cooldown_min": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "night_enabled": { ".validate": "newData.isBoolean()" },
+          "night_start": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+          "night_end": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+          "night_fan_max_pct": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "manual_fan_pct": { ".validate": "newData.val() == null || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && newData.val() % 1 == 0)" },
+          "fan_mode": { ".validate": "newData.val() == 'auto' || newData.val() == 'manual'" },
+          "fan_table": { ".validate": "newData.hasChildren()" },
+          "field_test": { ".validate": "newData.isBoolean()" },
+          "filter_reset_ts": { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "updated_ts": { ".validate": "newData.isNumber()" },
+          "updated_by": { ".validate": "newData.val() === auth.uid" },
+          "notify": {
+            "$channel": {
+              "enabled": { ".validate": "newData.isBoolean()" },
+              "set_ts": { ".validate": "newData.isNumber()" },
+              "hint": { ".validate": "newData.isString() && newData.val().length <= 4" },
+              "$other": { ".validate": false }
+            }
+          },
+          "$other": { ".validate": false }
+        },
+
+        "feedback": {
+          "$push": {
+            ".write": "auth != null && !data.exists() && newData.exists() && root.child('users').child(auth.uid).child('devices').child($deviceId).exists()",
+            ".validate": "newData.hasChildren(['cause_ts', 'correct'])",
+            "ts": { ".validate": "newData.isNumber()" },
+            "by": { ".validate": "newData.val() === auth.uid" },
+            "cause_id": { ".validate": "newData.isString()" },
+            "cause_ts": { ".validate": "newData.isNumber()" },
+            "correct": { ".validate": "newData.isBoolean()" },
+            "true_cause": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "ui_cmd": {
+          "$push": {
+            ".write": "auth != null && ((!data.exists() && newData.exists() && root.child('users').child(auth.uid).child('devices').child($deviceId).exists()) || (data.exists() && !newData.exists() && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'))",
+            ".validate": "newData.hasChildren(['ts', 'by', 'cmd'])",
+            "ts": { ".validate": "newData.isNumber()" },
+            "by": { ".validate": "newData.val() === auth.uid" },
+            "cmd": { ".validate": "newData.val() == 'confirm_present' || newData.val() == 'reset_fault' || newData.val() == 'reset_filter' || newData.val() == 'aim_person' || newData.val() == 'survey_now' || newData.val() == 'test_notify'" },
+            "channel": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          }
+        }
+      }
+    }
+  }
+}
