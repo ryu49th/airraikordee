@@ -111,3 +111,15 @@ cause:
   snapshot_max_age_s: 900
   max_images: 8
   image_max_width: 640
+
+# --- voice/voice.py: wake word -> INMP441 clip from Node 1 -> Google STT -> command -> Google TTS (AIR-20) ---
+voice:
+  player: aplay -q                  # USB speaker: add -D plughw:<card>,0 (card number from `aplay -l`)
+  volume: 1.0                       # 0-1, scales the WAV before playing
+  language: th-TH
+  tts_voice: th-TH-Standard-A       # th-TH-Neural2-C sounds better, smaller free quota
+  fan_step_pct: 25                  # "ฟอกแรงขึ้น / เบาลง"
+  audio_timeout_s: 8                # wake -> end of clip; Node 1 stops recording at 5 s
+  audio_retries: 3                  # rounds of asking Node 1 for missing frames
+  cause_wait_s: 20                  # "ทำไมฝุ่นเยอะ": wait this long for cause_rules
+  llm_timeout_s: 15

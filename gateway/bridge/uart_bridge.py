@@ -2,7 +2,8 @@
 
 Serial link: one JSON object per line, 115200 baud.
 - Node 1 -> bridge: telemetry (published on ab/node1/telemetry), events with a "type" field
-  (ab/node1/event), and {"ack": seq} replies to commands.
+  (ab/node1/event), {"ack": seq} replies to commands, and voice clip frames with an "audio" field
+  (ab/node1/audio, QoS 0; format in voice/voice.py).
 - bridge -> Node 1: commands from ab/node1/cmd, re-numbered with the bridge's own seq (several modules send
   commands, each with its own seq). Each one must be ACKed within ack_timeout_s, else it is resent up to
   `retries` times, then an alert goes out (E4). A {"cmd":"hb"} line every heartbeat_s keeps Node 1's
@@ -15,9 +16,9 @@ import logging
 import threading
 from collections import deque
 
-from common.protocol import (TOPIC_GW_ALERT, TOPIC_NODE1_ACK, TOPIC_NODE1_CMD, TOPIC_NODE1_EVENT,
-                             TOPIC_NODE1_TELEMETRY, ProtocolError, SeqCounter, SeqTracker, decode, encode,
-                             now_ts)
+from common.protocol import (TOPIC_GW_ALERT, TOPIC_NODE1_ACK, TOPIC_NODE1_AUDIO, TOPIC_NODE1_CMD,
+                             TOPIC_NODE1_EVENT, TOPIC_NODE1_TELEMETRY, ProtocolError, SeqCounter, SeqTracker,
+                             decode, encode, now_ts)
 
 log = logging.getLogger("uart_bridge")
 
@@ -51,7 +52,7 @@ class UartBridge(object):
         self._acks_lock = threading.Lock()
         self.rx_seq = SeqTracker()
         self.stats = {"rx_lines": 0, "bad_lines": 0, "cmd_ok": 0, "cmd_failed": 0, "resends": 0,
-                      "reconnects": 0}
+                      "reconnects": 0, "audio_lines": 0}
 
     def _default_serial(self):
         import serial
@@ -144,6 +145,11 @@ class UartBridge(object):
 
         if "ack" in msg:
             self._resolve_ack(msg["ack"])
+            return
+
+        if "audio" in msg:  # ~20 frames/s while a voice command streams; no seq, the clip has its own index
+            self.stats["audio_lines"] += 1
+            self.mqtt.publish(TOPIC_NODE1_AUDIO, msg, qos=0)
             return
 
         seq = msg.get("seq")

@@ -13,7 +13,8 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 | `vision/vision.py` | webcam + detectNet → `ab/gw/vision` (pan/tilt error, distance) 5 Hz; snapshots; 8-direction survey | done, needs the camera |
 | `ai/cause_rules.py` | local dust-cause rules → `ab/gw/cause` (source rules) | done |
 | `ai/cause_cloud.py` | blurred survey photos → Claude (`claude-opus-5-5`, JSON answer) when the rules are unsure | done, needs `AI_API_KEY` |
-| `sensors/ voice/ brain/ notify/` | other modules | todo |
+| `voice/voice.py` | wake word -> INMP441 clip from Node 1 -> Google STT -> command (keywords, Claude fallback) -> Google TTS on the speaker (AIR-20) | done, needs the keys + Node 1 audio frames |
+| `sensors/ brain/ notify/` | other modules | todo |
 | `udev/99-airraikordee.rules` | stable `/dev/airraikordee-node1` name for Node 1 | done |
 | `tests/` | pytest, no hardware needed | |
 
@@ -44,6 +45,7 @@ python3 -m health.health
 python3 -m vision.vision
 python3 -m ai.cause_rules
 python3 -m ai.cause_cloud
+python3 -m voice.voice
 python3 -m pytest tests
 ```
 On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (both git-ignored).
@@ -55,6 +57,42 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
   No answer: the same line is resent up to 3 times, then a `uart_fail` alert goes to `ab/gw/alert`.
 - Heartbeat line every 500 ms: `{"cmd":"hb","ts":..}` (no ACK). Stop servos after 2 s without any line.
 - When Node 1 ACKs, the bridge publishes `ab/node1/ack {ack_seq}` with the seq the sender used on MQTT.
+
+## Voice commands (voice.py, AIR-20)
+1. Node 1 hears the wake word and sends the `wake` event; the Jetson plays a chime.
+2. Node 1 records until ~0.8 s of silence or 5 s and streams the clip as **audio lines** on the same serial link:
+   ```
+   {"audio":12,"i":0,"pcm":"<base64, 50 ms of 16 kHz 16-bit mono = 1600 bytes>"}
+   ...
+   {"audio":12,"end":64,"rate":16000,"reason":"silence"}
+   ```
+   `audio` is a clip number Node 1 picks per wake. These lines carry no `seq` and get no `ack`; the bridge
+   forwards them on `ab/node1/audio`. 32 kB/s needs the ESP32-S3's **native USB (USB CDC)** port.
+   Firmware side: `node1/examples/voice_stream_test/VoiceStream.h` (drop-in, compiled for the ESP32-S3).
+3. voice.py answers on `ab/node1/cmd` with `{"cmd":"audio_ack","sid":12,"missing":[5,9]}`: Node 1 resends those
+   frames and the `end` line again (up to 3 rounds). `missing: []` means done, free the clip (keep it in PSRAM
+   until then, or 10 s at most).
+4. Google Speech-to-Text (th-TH) -> keyword rules -> Claude if no keyword matched -> action -> Google
+   Text-to-Speech on the USB speaker.
+
+| Said | Action |
+|---|---|
+| "หันมาทางนี้" | `aim` to the nearest person in `ab/gw/vision` (current pan/tilt + the person's error) |
+| "ฟอกแรงขึ้น" / "เบาลง" | `fan` ± 25 % from the current `fan_pct` |
+| "ทำไมฝุ่นเยอะ" | says the advice of a cause from the last 10 min, else asks `ab/gw/cause/request` and a survey, waits up to 20 s |
+| "หยุด" | `stop` |
+
+- `.env`: `STT_API_KEY` / `TTS_API_KEY` (one Google Cloud API key with both APIs enabled), `AI_API_KEY` (Claude).
+- Every fixed reply and dust-cause advice is cached as a WAV in `data_dir/tts_cache/`. Run
+  `python3 -m voice.voice --prepare` once while online; after that the unit can still say "no internet" and the
+  dust advice offline. `--say "ข้อความ"` speaks one sentence, `--wav file.wav` runs one recording through STT.
+- Speaker: find the card with `aplay -l`, then set `voice.player: aplay -q -D plughw:<card>,0` in `config.yaml`.
+- Each command publishes `ab/gw/voice {ts, sid, text, intent, source, reply, ok, latency_s}`
+  (`latency_s` = wake -> reply, for the metrics table).
+- Manual fan from the dashboard (config_listener) re-sends its speed every 60 s, so a voice fan change lasts
+  until then in manual mode; in auto mode it lasts until `decision.py` (not written yet) picks a new speed.
+- Try it without the ESP32: `python3 -m tools.sim_node1 --voice-wav hello.wav` (16 kHz mono), run voice.py, press
+  `w`. `--drop-audio 0.1` drops frames to test the resend.
 
 ## Firebase (uploader)
 Paths and fields follow Farn's data contract (`docs/protocol.md` → "Firebase Realtime Database").

@@ -5,17 +5,21 @@ and obeys the same commands (docs/protocol.md):
 
   ab/node1/telemetry  every second
   ab/node1/event      wake / stop_pressed / servo_timeout
+  ab/node1/audio      after a wake, the --voice-wav clip as audio frames (voice/voice.py format)
   ab/node1/ack        {ack_seq} for every command that carries a seq
-  ab/node1/cmd        (subscribed) aim / fan / stop / survey_step
+  ab/node1/cmd        (subscribed) aim / fan / stop / survey_step / audio_ack
 
 PM2.5 follows a small room model: dust sources push it up and the fan pulls it down,
 so decision.py can be tested as a closed loop.
 
 Run from gateway/:  python3 -m tools.sim_node1 --help
 """
+import base64
 import json
 import random
 import threading
+import time
+import wave
 
 from tools.sim_common import Link, Seq, base_args, clamp, log, now, run_every, start_keys
 
@@ -24,6 +28,8 @@ TEL_TOPIC = "ab/node1/telemetry"
 EVENT_TOPIC = "ab/node1/event"
 CMD_TOPIC = "ab/node1/cmd"
 ACK_TOPIC = "ab/node1/ack"
+AUDIO_TOPIC = "ab/node1/audio"
+AUDIO_FRAME_BYTES = 1600  # 50 ms of 16 kHz 16-bit mono, as the firmware sends it
 
 PAN_LIMIT = 180.0     # firmware limit, +-180 deg (CLAUDE.md)
 TILT_LIMIT = 30.0     # louver +-30 deg
@@ -176,6 +182,10 @@ def main():
                    help="fraction of telemetry to drop on purpose (tests seq-gap metrics)")
     p.add_argument("--drop-ack", type=float, default=0.0,
                    help="fraction of ACKs to drop on purpose (tests retry)")
+    p.add_argument("--voice-wav", metavar="FILE",
+                   help="16 kHz mono 16-bit WAV streamed as the spoken command after each wake (key w)")
+    p.add_argument("--drop-audio", type=float, default=0.0,
+                   help="fraction of audio frames to drop on purpose (tests the resend)")
     args = p.parse_args()
 
     rng = random.Random(args.seed)
@@ -188,7 +198,49 @@ def main():
         link.publish(EVENT_TOPIC, {"node_id": NODE_ID, "seq": seq.next(), "ts": now(), "type": kind}, qos=1)
         log("event " + kind)
 
+    clip = {"sid": 0, "frames": [], "rate": 16000}
+    if args.voice_wav:
+        w = wave.open(args.voice_wav, "rb")
+        if w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise SystemExit("--voice-wav must be mono 16-bit (e.g. sox in.wav -r 16000 -c 1 -b 16 out.wav)")
+        pcm, clip["rate"] = w.readframes(w.getnframes()), w.getframerate()
+        w.close()
+        clip["frames"] = [pcm[i:i + AUDIO_FRAME_BYTES] for i in range(0, len(pcm), AUDIO_FRAME_BYTES)]
+
+    def send_frame(sid, i):
+        if rng.random() < args.drop_audio:
+            return
+        link.publish(AUDIO_TOPIC, {"audio": sid, "i": i,
+                                   "pcm": base64.b64encode(clip["frames"][i]).decode("ascii")}, qos=0)
+
+    def send_end(sid):
+        link.publish(AUDIO_TOPIC, {"audio": sid, "end": len(clip["frames"]), "rate": clip["rate"],
+                                   "reason": "silence"}, qos=0)
+
+    def stream_clip():
+        clip["sid"] += 1
+        sid = clip["sid"]
+        for i in range(len(clip["frames"])):
+            send_frame(sid, i)
+            time.sleep(0.05)  # real time, like the microphone
+        send_end(sid)
+        log("voice clip {} sent ({} frames)".format(sid, len(clip["frames"])))
+
+    def on_audio_ack(msg):
+        missing = [i for i in msg.get("missing") or [] if 0 <= i < len(clip["frames"])]
+        if msg.get("sid") != clip["sid"] or not missing:
+            return "audio clip {} done".format(msg.get("sid"))
+        for i in missing:
+            send_frame(clip["sid"], i)
+        send_end(clip["sid"])
+        return "resent {} audio frames".format(len(missing))
+
     def on_json(topic, msg):
+        if msg.get("cmd") == "audio_ack":
+            log("cmd audio_ack -> " + on_audio_ack(msg))
+            if "seq" in msg:
+                link.publish(ACK_TOPIC, {"ack_seq": msg["seq"]}, qos=1)
+            return
         with lock:
             try:
                 note = model.apply_cmd(msg)
@@ -220,6 +272,8 @@ def main():
                 print(KEYS_HELP, flush=True)
         if key == "w":
             send_event("wake")
+            if clip["frames"]:
+                threading.Thread(target=stream_clip, daemon=True).start()
         elif key == "t":
             send_event("servo_timeout")
         elif key == "s":
