@@ -352,7 +352,7 @@ type AlertType = "pm_high" | "node_offline" | "uart_fail" | "charge_cut_temp" | 
 | `type` | `level` | When |
 |---|---|---|
 | `pm_high` | warn | `pm25_corrected` > `config.pm_alert` for `config.pm_alert_min` minutes |
-| `node_offline` | crit | node not seen for 60 s |
+| `node_offline` | crit | `node*_online` turns false (node not seen for 30 s, see Offline rules) |
 | `uart_fail` | warn | a Node 1 command failed after 3 retries |
 | `charge_cut_temp` | crit | charging stopped for battery or charger temperature |
 | `charge_fault` | crit | Node 2 latched FAULT (over-current, timer) |
@@ -397,9 +397,19 @@ interface HealthRecord {
 }
 ```
 - The fields other than `ts`, `pending_rows` and `last_upload_ts` come from `ab/gw/health`.
-- `node*_online` follows `health.py` (offline after 30 s without data). `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min" and the `node_offline` alert (60 s) has a source.
+- `node*_online` follows `health.py` (offline after 30 s without data). `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min". The `node_offline` alert fires at the same moment `node*_online` turns false (30 s), never later.
 - `fan_rpm_ratio` is the RPM now divided by the RPM with a fresh filter at the same `fan_pct`. A falling ratio means the filter is clogging.
-- The dashboard shows the whole unit as offline when `health.ts` is older than 90 s.
+- The dashboard shows the whole unit as offline when `telemetry/node1/latest.ts` is older than 90 s (the gateway-silent rule below; PR #4 reads this path).
+
+**Offline rules** (one value per question):
+
+| Rule | Value | Who decides | What the web shows |
+|---|---|---|---|
+| One node is offline | 30 s without a message from that node | `health.py` (sets `node*_online` = false) | that node offline, "offline for N min" from `node*_last_seen` |
+| `node_offline` alert | the same moment: `node*_online` turns false (30 s) | the gateway, from the same flag | an alert in the list |
+| Whole unit / gateway silent | `telemetry/node1/latest.ts` older than 90 s | the dashboard, from its own clock | the whole unit offline |
+
+The alert can never arrive after the web shows a node offline, because both follow the same `node*_online` flag. The 90 s rule is a separate check: the unit sends telemetry every 1 s and `health` every 10 s, so 90 s of silence (9 missed health heartbeats) means the whole unit or gateway is down, not that one node is late.
 
 **History, two time frames** (`history/node1/{minuteTs}` and `history/node1_m15/{ts}`): key = unix seconds at the start of the bucket (`ts − ts % 60` for 1 min, `ts − ts % 900` for 15 min), 10 digits, so keys sort by time. A repeated write replaces the row instead of adding one. Values are averages over the bucket; `ts` = the last sample in it.
 ```ts
