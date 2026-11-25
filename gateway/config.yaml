@@ -41,8 +41,17 @@ uploader:
   health_every_s: 30
   node_offline_s: 30                # node*_online = false after this long without telemetry
 
+# --- cloud/config_listener.py: dashboard settings (devices/<DEVICE_ID>/config) -> ab/gw/config ---
+config_listener:
+  poll_s: 5                         # AIR-97: every 5-10 s
+  manual_resend_s: 60               # repeat the manual fan command (Node 1 forgets it after a reset)
+  backoff_max_s: 60                 # slower polls while Firebase is unreachable
+  timeout_s: 10
+  cache_file: config_cache.json     # inside data_dir; last good settings for a boot without internet
+
 # --- brain/decision.py (spec section 4) ---
 decision:
+  pm_alert: 35                      # µg/m³; default until the dashboard sets config.pm_alert
   humidity_k: 0.5                   # pm25_corrected = pm25 / (1 + k * max(0, rh - 60) / 40); calibrate later
   fan_table:                        # [pm25_corrected upper bound, fan %]
     - [15, 25]

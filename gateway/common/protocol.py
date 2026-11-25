@@ -22,6 +22,8 @@ TOPIC_GW_HEALTH = "ab/gw/health"
 # Gateway-internal additions (not node-facing): one-off alerts from any module, uploader backlog stats.
 TOPIC_GW_ALERT = "ab/gw/alert"
 TOPIC_GW_UPLOADER = "ab/gw/uploader"
+# Settings from the dashboard (devices/<id>/config), retained so a module that starts later gets them.
+TOPIC_GW_CONFIG = "ab/gw/config"
 
 UINT32 = 2 ** 32
 

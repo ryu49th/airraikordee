@@ -7,6 +7,7 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 | `common/` | `config.py` (config.yaml + .env), `protocol.py` (topics, JSON, seq), `mqtt_client.py`, `logging_setup.py`, `service.py` | done |
 | `bridge/uart_bridge.py` | Node 1 USB serial <-> MQTT, ACK/retry, heartbeat, auto-reconnect | done |
 | `cloud/uploader.py` | MQTT -> SQLite outbox -> Firebase REST under `devices/<id>`, device-account login, backoff (E4) | done (uplink) |
+| `cloud/config_listener.py` | Firebase `devices/<id>/config` (dashboard Settings) -> `ab/gw/config` (retained) + manual fan to Node 1 (AIR-97) | done |
 | `tools/sim_node1.py`, `tools/sim_node2.py` | fake nodes, see below | done |
 | `vision/vision.py` | webcam + detectNet → `ab/gw/vision` (pan/tilt error, distance) 5 Hz; snapshots; 8-direction survey | done, needs the camera |
 | `ai/cause_rules.py` | local dust-cause rules → `ab/gw/cause` (source rules) | done |
@@ -37,6 +38,7 @@ The gateway uses its own Mosquitto on **port 1884**, run as user `eiclite` witho
 ```bash
 python3 -m bridge.uart_bridge
 python3 -m cloud.uploader
+python3 -m cloud.config_listener
 python3 -m vision.vision
 python3 -m ai.cause_rules
 python3 -m ai.cause_cloud
@@ -59,7 +61,21 @@ Everything goes under `devices/<DEVICE_ID>/` with one PATCH per batch. The Jetso
 `DEVICE_ID` and `DEVICE_PASSWORD` (the password comes from Farn privately, never in Git).
 `*/latest` and `state` are overwritten at most every 2 s, `history/node1/<minute>` gets one averaged row per
 minute, `health` every 10 s, `cause/latest` and `alerts/<id>` on every event.
-Not done here: reading `config` back down (AIR-97).
+Reading `config` back down is `cloud/config_listener.py` (below).
+
+## Settings from the dashboard (config_listener)
+Polls `devices/<DEVICE_ID>/config` every 5 s with the same device account and `.env` values as the uploader.
+- Checks each field (`pm_alert` 5–500, `night_start` / `night_end` "HH:MM", `fan_mode` auto/manual,
+  `manual_fan_pct` 0–100, `filter_reset_ts`); a missing or invalid one falls back to `config.yaml` (`decision:`).
+- Publishes the settings in use on **`ab/gw/config`, retained** (`{ts, source, pm_alert, night_start, night_end,
+  fan_mode, manual_fan_pct, filter_reset_ts}`, `source` = firebase / cache / defaults), so `decision.py` and
+  `health.py` get them even if they start later.
+- `fan_mode: manual` -> `ab/node1/cmd {"cmd":"fan","pct":manual_fan_pct}` on every change and again every 60 s.
+  In `auto` it sends nothing: picking the speed from PM is `decision.py`'s job (AIR-13, not written yet).
+- Firebase unreachable: keeps the last settings, polls slower (up to 60 s), and keeps them across a restart
+  through `data_dir/config_cache.json`.
+Try it without hardware: run `tools.sim_node1` and the listener, set the fan to manual on the dashboard, and the
+sim's `fan_pct` follows within ~5 s.
 
 ## Simulators (no hardware needed)
 
