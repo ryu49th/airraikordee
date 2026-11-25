@@ -1,0 +1,13 @@
+# Gateway modules that run as services (python module paths, one per line). install.sh enables each one.
+# Remove a line (or `sudo systemctl disable airraikordee@<module>`) to leave a module off.
+bridge.uart_bridge
+cloud.uploader
+cloud.config_listener
+health.health
+brain.decision
+sensors.bme280_reader
+vision.vision
+ai.cause_rules
+ai.cause_cloud
+voice.voice
+notify.discord

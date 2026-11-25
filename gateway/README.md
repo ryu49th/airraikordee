@@ -29,6 +29,21 @@ sudo cp .env.example /etc/airraikordee/.env    # then fill in the real values
 sudo cp udev/99-airraikordee.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
 ```
 
+## Run at boot (systemd, AIR-22)
+```bash
+sudo systemd/install.sh            # as the user who owns this folder (or: sudo systemd/install.sh eiclite)
+systemctl status 'airraikordee@*' --no-pager
+journalctl -u airraikordee@brain.decision -f
+sudo systemctl restart airraikordee.target      # after `git pull`
+```
+- One template unit, `airraikordee@<module>.service`, runs `python3 -m <module>` from this folder with
+  `Restart=always` (3 s). `airraikordee.target` starts them all at boot.
+- `systemd/modules.txt` lists the modules that run; remove a line, or `sudo systemctl disable
+  airraikordee@<module>`, to leave one off (for example `voice.voice` until the keys are in `.env`).
+- The installer adds the user to `dialout`, `i2c`, `video` and `audio`, creates `/var/lib/airraikordee` and
+  `/var/log/airraikordee`, and warns if the user cannot read `/etc/airraikordee/.env`.
+- The MQTT broker keeps its own crontab start (below); the modules reconnect by themselves when it comes up.
+
 ## MQTT broker (port 1884)
 The gateway uses its own Mosquitto on **port 1884**, run as user `eiclite` without sudo
 (the system broker on 1883 has a login the team does not know):
