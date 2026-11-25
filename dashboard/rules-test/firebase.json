@@ -1,0 +1,1 @@
+{ "database": { "rules": "rules.copy.json" }, "emulators": { "database": { "port": 9000 }, "ui": { "enabled": false } } }

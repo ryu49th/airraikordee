@@ -1,0 +1,13 @@
+{
+  "name": "airraikordee-rules-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "cp ../database.rules.json rules.copy.json && firebase emulators:exec --only database --project demo-ab --config firebase.json \"node --test rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.0",
+    "firebase": "^11.0.0",
+    "firebase-tools": "^13.0.0"
+  }
+}
