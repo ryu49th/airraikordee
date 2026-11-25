@@ -8,7 +8,7 @@ FAULT / FIELD_TEST) with a simple 3S2P battery model, over MQTT (docs/protocol.m
   ab/node2/cmd         (subscribed) charge_allowed, plus proposed field_test / reset_fault
   ab/node1/telemetry   (subscribed) battery temperature batt_temp_c from Node 1
 
-Nothing sends charge_allowed until decision.py exists, so use --auto-allow to fake it.
+brain/decision.py sends charge_allowed; without it, use --auto-allow to fake it.
 
 Run from gateway/:  python3 -m tools.sim_node2 --help
 """

@@ -75,6 +75,13 @@ decision:
   aim_max_step_deg: 10
   charge_person_window_s: 900
   charge_max_temp_c: 45
+  charge_refresh_s: 30              # Node 2 stops by itself 60 s after the last charge_allowed
+  pm_alert_min: 10                  # pm_high after this many minutes above pm_alert
+  fan_resend_s: 60                  # repeat the fan command (Node 1 forgets it after a reset)
+  aim_gain: 0.8                     # P-controller gain on the person's pan/tilt error
+  clogged_ratio: 0.7                # filter_clogged when health's fan_rpm_ratio stays below this
+  clogged_for_s: 600
+  battery_low_pct: 25
 
 # --- vision/vision.py ---
 vision:
