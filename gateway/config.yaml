@@ -130,6 +130,8 @@ voice:
   audio_retries: 3                  # rounds of asking Node 1 for missing frames
   cause_wait_s: 20                  # "ทำไมฝุ่นเยอะ": wait this long for cause_rules
   llm_timeout_s: 15
+  llm: gemini                       # sentences without a keyword: gemini (GEMINI_API_KEY) or claude (AI_API_KEY)
+  gemini_model: gemini-2.5-flash    # any model from https://ai.google.dev/gemini-api/docs/models
 
 # --- notify/discord.py: alerts -> Discord webhook (AIR-52); the URL is DISCORD_WEBHOOK_URL in .env ---
 notify:

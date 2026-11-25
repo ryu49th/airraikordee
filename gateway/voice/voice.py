@@ -32,7 +32,8 @@ Night mode (ab/gw/state mode "night", from decision.py): no chime and no spoken 
 Publishes ab/gw/voice {ts, sid, text, intent, source, reply, ok, latency_s} after each command (metrics).
 
 Keys in .env: STT_API_KEY and TTS_API_KEY (one Google Cloud API key may serve both, with the Speech-to-Text and
-Text-to-Speech APIs enabled), AI_API_KEY for the Claude fallback.
+Text-to-Speech APIs enabled), and the key of the LLM fallback picked by `voice.llm` in config.yaml:
+GEMINI_API_KEY for "gemini" (Google AI Studio) or AI_API_KEY for "claude".
 
 Run on the Jetson from gateway/:  python3 -m voice.voice
 """
@@ -62,6 +63,7 @@ TOPIC_CAUSE_REQUEST = "ab/gw/cause/request"
 STT_URL = "https://speech.googleapis.com/v1/speech:recognize"
 TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 CLAUDE_MODEL = "claude-opus-5-5"
 
 INTENTS = ("aim", "fan_up", "fan_down", "why", "stop", "unknown")
@@ -82,6 +84,8 @@ DEFAULTS = {
     "person_max_age_s": 2.0,
     "cause_fresh_s": 600,        # a cause younger than this is answered at once
     "cause_wait_s": 20,          # otherwise wait this long for cause_rules
+    "llm": "gemini",             # LLM for sentences without a keyword: "gemini" or "claude"
+    "gemini_model": "gemini-2.5-flash",
     "player": "aplay -q",        # + " -D plughw:<card>" for the USB speaker, see README
     "volume": 1.0,
 }
@@ -401,6 +405,9 @@ class ClaudeIntent(object):
     """LLM fallback when no keyword matched. The Jetson's Python 3.6 cannot run the Anthropic SDK, so this
     posts to the Messages API with requests, like ai/cause_cloud.py."""
 
+    name = "Claude"
+    key_name = "AI_API_KEY"
+
     def __init__(self, api_key, session, cfg):
         self.api_key = api_key
         self.session = session
@@ -423,6 +430,78 @@ class ClaudeIntent(object):
         if answer is None:
             raise CloudError("LLM answer unusable")
         return answer
+
+
+GEMINI_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"intent": {"type": "STRING", "enum": list(INTENTS)}, "reply": {"type": "STRING"}},
+    "required": ["intent", "reply"],
+}
+
+
+def build_gemini_request(text):
+    return {
+        "contents": [{"role": "user", "parts": [{"text": LLM_PROMPT % text.replace('"', "'")}]}],
+        "generationConfig": {"responseMimeType": "application/json", "responseSchema": GEMINI_SCHEMA,
+                             "maxOutputTokens": 1024},
+    }
+
+
+def parse_gemini_response(body):
+    """generateContent JSON -> (intent, reply) or None."""
+    if (body.get("promptFeedback") or {}).get("blockReason"):
+        log.warning("Gemini blocked the prompt: %s", body["promptFeedback"]["blockReason"])
+        return None
+    for cand in body.get("candidates") or []:
+        parts = (cand.get("content") or {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if data.get("intent") in INTENTS:
+            return data["intent"], (data.get("reply") or "").strip()[:200]
+    return None
+
+
+class GeminiIntent(object):
+    """LLM fallback on Google's Gemini API (REST with an AI Studio key, works on the Jetson's Python 3.6)."""
+
+    name = "Gemini"
+    key_name = "GEMINI_API_KEY"
+
+    def __init__(self, api_key, session, cfg):
+        self.api_key = api_key
+        self.session = session
+        self.c = cfg
+
+    def classify(self, text):
+        if not self.api_key:
+            raise CloudError("GEMINI_API_KEY not set")
+        if self.session is None:
+            import requests
+            self.session = requests.Session()
+        try:
+            r = self.session.post(GEMINI_URL % self.c["gemini_model"], json=build_gemini_request(text),
+                                  headers={"x-goog-api-key": self.api_key, "content-type": "application/json"},
+                                  timeout=self.c["llm_timeout_s"])
+            body = r.json()
+        except Exception as e:
+            raise CloudError("Gemini unreachable: %s" % type(e).__name__)
+        if r.status_code != 200:
+            err = (body.get("error") or {}) if isinstance(body, dict) else {}
+            raise CloudError("Gemini error %s: %s" % (r.status_code, err.get("message", str(body)[:200])))
+        answer = parse_gemini_response(body)
+        if answer is None:
+            raise CloudError("Gemini answer unusable")
+        return answer
+
+
+def make_llm(c, secret, session):
+    """The LLM picked by voice.llm ("gemini" or "claude")."""
+    if c.get("llm", "gemini") == "claude":
+        return ClaudeIntent(secret("AI_API_KEY") or secret("ANTHROPIC_API_KEY"), session, c)
+    return GeminiIntent(secret("GEMINI_API_KEY") or secret("GOOGLE_API_KEY"), session, c)
 
 
 class Player(object):
@@ -764,8 +843,8 @@ def chat(cfg, llm, live=False, read=input, write=print):
                                (TOPIC_GW_CAUSE, voice.on_cause), (TOPIC_GW_STATE, voice.on_state)):
             mqtt.subscribe(topic, handler, qos=0)
     write("พิมพ์คำสั่งแทนการพูด เช่น หันมาทางนี้ / ฟอกแรงขึ้น / เบาลง / ทำไมฝุ่นเยอะ / หยุด  (exit = ออก)")
-    write("โหมด: %s, Claude: %s" % ("ส่งคำสั่งจริงทาง MQTT" if live else "แค่แสดงคำสั่ง ไม่ส่งจริง",
-                                    "เปิด" if llm.api_key else "ปิด (ไม่มี AI_API_KEY ใช้แค่คำสำคัญ)"))
+    write("โหมด: %s, %s: %s" % ("ส่งคำสั่งจริงทาง MQTT" if live else "แค่แสดงคำสั่ง ไม่ส่งจริง", llm.name,
+                                "เปิด" if llm.api_key else "ปิด (ไม่มี %s ใช้แค่คำสำคัญ)" % llm.key_name))
     while True:
         try:
             text = read("คุณ: ").strip()
@@ -813,7 +892,7 @@ def main():
     tts_key = secret("TTS_API_KEY") or stt_key
     stt = GoogleStt(stt_key, session, c)
     tts = GoogleTts(tts_key, session, c, cache)
-    llm = ClaudeIntent(secret("AI_API_KEY") or secret("ANTHROPIC_API_KEY"), session, c)
+    llm = make_llm(c, secret, session)
     player = Player(c, os.path.join(data, "voice_tmp"))
 
     if args.prepare:
@@ -838,7 +917,7 @@ def main():
         print(json.dumps({"text": text, "intent": intent, "llm_reply": reply}, ensure_ascii=False))
         return
 
-    for name, key in (("STT_API_KEY", stt_key), ("TTS_API_KEY", tts_key), ("AI_API_KEY", llm.api_key)):
+    for name, key in (("STT_API_KEY", stt_key), ("TTS_API_KEY", tts_key), (llm.key_name, llm.api_key)):
         if not key:
             log.error("%s not set in .env", name)
     client = MqttClient("voice", cfg)

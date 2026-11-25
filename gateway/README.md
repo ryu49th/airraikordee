@@ -102,7 +102,8 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
 | "ทำไมฝุ่นเยอะ" | says the advice of a cause from the last 10 min, else asks `ab/gw/cause/request` and a survey, waits up to 20 s |
 | "หยุด" | `stop` |
 
-- `.env`: `STT_API_KEY` / `TTS_API_KEY` (one Google Cloud API key with both APIs enabled), `AI_API_KEY` (Claude).
+- `.env`: `STT_API_KEY` / `TTS_API_KEY` (one Google Cloud API key with both APIs enabled), and the LLM key:
+  `GEMINI_API_KEY` (default, `voice.llm: gemini`, key from Google AI Studio) or `AI_API_KEY` (`voice.llm: claude`).
 - Every fixed reply and dust-cause advice is cached as a WAV in `data_dir/tts_cache/`. Run
   `python3 -m voice.voice --prepare` once while online; after that the unit can still say "no internet" and the
   dust advice offline. `--say "ข้อความ"` speaks one sentence, `--wav file.wav` runs one recording through STT.
@@ -114,8 +115,8 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
   until then in manual mode; in auto mode it lasts until `decision.py` (not written yet) picks a new speed.
 - **Type instead of speaking:** `python3 -m voice.voice --chat` asks for a command and prints the unit's reply
   and the MQTT commands it would send (nothing is sent). Add `--live` to really send them, e.g. with
-  `tools.sim_node1` running. Needs no microphone, speaker or Google key; Claude (for sentences without a keyword)
-  needs `AI_API_KEY`.
+  `tools.sim_node1` running. Needs no microphone, speaker or Google Cloud key; the LLM (for sentences without a
+  keyword) needs `GEMINI_API_KEY` (or `AI_API_KEY` with `voice.llm: claude`).
 - Try it without the ESP32: `python3 -m tools.sim_node1 --voice-wav hello.wav` (16 kHz mono), run voice.py, press
   `w`. `--drop-audio 0.1` drops frames to test the resend.
 

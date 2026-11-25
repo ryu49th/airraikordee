@@ -344,3 +344,35 @@ def test_chat_mode_types_commands_and_prints_replies(capsys):
     assert "เครื่อง: " + REPLIES["fan_up"] in out and "เครื่อง: " + REPLIES["stop"] in out
     assert "เครื่อง: " + REPLIES["unknown"] in out              # no AI key: keywords only
     assert '"cmd": "fan", "pct": 75' in printed and '"cmd": "stop"' in printed   # shown, not sent
+
+
+def test_gemini_request_answer_and_key():
+    from voice.voice import (GeminiIntent, build_gemini_request, make_llm, parse_gemini_response)
+    body = build_gemini_request('เปิด "ลม" หน่อย')
+    cfg = body["generationConfig"]
+    assert cfg["responseMimeType"] == "application/json" and "unknown" in cfg["responseSchema"]["properties"]["intent"]["enum"]
+    assert '"ลม"' not in body["contents"][0]["parts"][0]["text"]
+    ok = {"candidates": [{"content": {"parts": [{"text": "thinking...", "thought": True},
+                                                {"text": json.dumps({"intent": "fan_up", "reply": "ได้ครับ"})}]}}]}
+    assert parse_gemini_response(ok) == ("fan_up", "ได้ครับ")
+    assert parse_gemini_response({"promptFeedback": {"blockReason": "SAFETY"}}) is None
+    assert parse_gemini_response({"candidates": [{"content": {"parts": [{"text": "not json"}]}}]}) is None
+
+    class Resp(object):
+        status_code = 200
+
+        def json(self):
+            return ok
+
+    class Session(object):
+        def post(self, url, json=None, headers=None, timeout=None):
+            self.url, self.headers = url, headers
+            return Resp()
+
+    s = Session()
+    g = GeminiIntent("k", s, DEFAULTS)
+    assert g.classify("แรงกว่านี้") == ("fan_up", "ได้ครับ")
+    assert s.url.endswith("/models/gemini-2.5-flash:generateContent") and s.headers["x-goog-api-key"] == "k"
+    keys = {"GEMINI_API_KEY": "g", "AI_API_KEY": "c"}
+    assert make_llm(dict(DEFAULTS), keys.get, None).name == "Gemini"
+    assert make_llm(dict(DEFAULTS, llm="claude"), keys.get, None).api_key == "c"
