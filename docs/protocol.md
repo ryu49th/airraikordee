@@ -42,8 +42,8 @@ interface Node1Telemetry {
   pm25: integer;            // µg/m³
   pm10: integer;            // µg/m³
   fan_rpm: integer;         // rpm, 0 to about 1700
-  pan_deg: float;           // degrees, -180 to 180, 1 decimal
-  tilt_deg: float;          // degrees, -30 to 30, 1 decimal
+  pan_deg: float;           // degrees, 1 decimal. Design -180 to 180; the Node 1 firmware today stops at -90 to 90 (no limit switch yet)
+  tilt_deg: float;          // degrees, 1 decimal. Design -30 to 30; the firmware today -20 to 20 (louver servo 90 to 130)
   button: boolean;          // true while the stop button is pressed
 }
 
@@ -51,7 +51,7 @@ interface Node1Event {
   node_id: string;          // "node1"
   seq: uint32;
   ts: unix_seconds;
-  type: "wake" | "stop_pressed" | "servo_timeout";   // JSON string
+  type: "wake" | "stop_pressed" | "servo_timeout";   // JSON string. The firmware sends only stop_pressed and servo_timeout; "wake" is planned (microphone pins reserved, no code)
 }
 
 interface Node1CmdBase { seq: uint32; ts: unix_seconds }
@@ -71,7 +71,7 @@ interface Node2Telemetry {
   voltage: float;           // V, 2 decimals
   current_a: float;         // A, 2 decimals
   temp_c: float;            // °C, 1 decimal
-  est_percent: integer | null;   // 0 to 100; null while the cable is unplugged
+  est_percent: integer | null;   // the box has no battery gauge: null, except 100 when the charge is FULL (Node 2 firmware)
 }
 
 interface Node2Cmd {
@@ -79,6 +79,8 @@ interface Node2Cmd {
   ts: unix_seconds;
   charge_allowed: boolean;
   reason: string;
+  reset_fault?: boolean;    // sent by decision.py for the dashboard's reset_fault button; the firmware clears FAULT if the cause is gone
+  field_test?: boolean;     // accepted by the firmware, used on the bench and by sim_node2
 }
 
 interface Ack {
@@ -592,6 +594,12 @@ The code wins; this table lists what the doc describes and whether code exists. 
 | `feedback` copy to the SQLite accuracy table | planned, no code | |
 | `cause/history`, `history/node1_m15`, retention deletes | planned, no code | |
 | Health fields `node*_last_seen`, `ram_pct`, `disk_pct`, `fan_rpm_ratio` in Firebase | on MQTT only | uploader `HEALTH_FIELDS` |
-| `database.rules.json` | in the repo (`dashboard/`), 35 emulator tests pass, not deployed | deploy is Farn's step |
+| `database.rules.json` | in the repo (`dashboard/`), 39 emulator tests pass, **deployed to the real project on 25 Nov** (it keeps the LINE `linkcode` and the `ts` indexes the earlier live rules had) | Farn |
+| Node 1 firmware (ESP32-S3): USB JSON link, stepper pan, louver servo, fan PWM and relay, PMS5003, NTC, stop button, 2 s watchdog | in code, pan and pins tested on the hardware 24 Nov | PR #17 |
+| Node 2 firmware (ESP8266): MQTT, charge state machine with INA226, DS18B20, ChulaWiFi login option | in code | PR #17 |
+| Node 1 wake word (microphone) | planned, not in the firmware | pins reserved |
+| Pan and tilt limits | **gap**: firmware stops at ±90 and ±20 until a limit switch is fitted, `decision.py` still uses ±178 and ±30 | gateway config or firmware |
+
+Rule for conflicts: physical facts (pins, ranges, speeds, chips) follow the firmware that runs on the hardware; the wire format follows this file where the gateway code and tests already depend on it; design goals stay here marked planned until the hardware supports them.
 
 Decided by Farn on 25 Nov: `*/latest` is written every 2 s (the code in PR #8 and #6 still has 1 s in `uploader.rates_s`; change it to 2), `pm_alert` stays 35 (the gateway spec text still says 55), and the team labels removed from the doc stay removed.
