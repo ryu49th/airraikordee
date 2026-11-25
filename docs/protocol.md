@@ -216,7 +216,7 @@ The uploader polls `config`, `ui_cmd` and `feedback` every 3 s, so a change on t
 
 Field types use the wire types from the top of this file. Firebase stores JSON, so `integer` and `float` are both a JSON number there; `ts` is always a whole number (the uploader rounds it down).
 
-**`telemetry/node1/latest`**: from `ab/node1/telemetry`; `pm25_corrected`, `fan_pct` and `mode` (= `state.mode`) from `ab/gw/state`; `person` = `ab/gw/vision.person_present`.
+**`telemetry/node1/latest`**: from `ab/node1/telemetry` (`pm25` and `pm10` are integers from the sensor on MQTT and a JSON number in Firebase; `pm1` stays on the Jetson, the uploader does not copy it); `pm25_corrected`, `fan_pct` and `mode` (= `state.mode`) from `ab/gw/state`; `person` = `ab/gw/vision.person_present`.
 ```ts
 interface Node1Record {
   ts: unix_seconds;
@@ -237,7 +237,7 @@ interface Node1Record {
 interface Node2Record {
   ts: unix_seconds;
   mode: "IDLE" | "DOCKED" | "CHARGING" | "FULL" | "FAULT" | "FIELD_TEST" | null;
-  fault: "over_current" | "over_temp" | "timer" | null;
+  fault: "over_current" | "over_temp" | "timer" | null;   // planned: the uploader does not copy `fault` yet (the simulator sends it)
   voltage: float | null;
   current_a: float | null;
   temp_c: float | null;
@@ -257,20 +257,18 @@ interface EnvRecord {
 }
 ```
 
-**`state`** = `ab/gw/state`. The uploader's outbox counts are not in `state`; they are `pending_rows` and `last_upload_ts` in `health`.
+**`state`**: from `ab/gw/state`. The uploader (PR #8) writes only four of its fields, and `alerts` as a list of type strings. `ts`, `pm25_corrected` and the alert objects stay in MQTT `GwState`; the alert details go to `alerts/{key}`. The dashboard accepts strings and objects. The outbox counts are `pending_rows` and `last_upload_ts` in `health`. Nothing publishes `ab/gw/state` yet (`brain/` is empty, no `decision.py`), so this path stays empty until it exists.
 ```ts
-type Mode = "aim_person" | "survey" | "night" | "idle";   // names in the gateway spec, §4 decision.py
+type Mode = "aim_person" | "survey" | "night" | "idle";   // names in the gateway spec, §4 decision.py (planned)
 
-interface StateRecord {   // same shape as GwState
-  ts: unix_seconds;
+interface StateRecord {   // what the uploader writes
   mode: Mode;
   fan_pct: integer;
   target: { pan_deg: float; tilt_deg: float };
-  pm25_corrected: float;
-  alerts: StateAlert[];
+  alerts: AlertType[];
 }
 
-interface StateAlert {
+interface StateAlert {    // item of `GwState.alerts` on MQTT only
   type: AlertType;
   level: "info" | "warn" | "crit";
   title: string;
@@ -280,33 +278,23 @@ interface StateAlert {
 ```
 ```json
 {
-  "ts": 1794383760,
   "mode": "aim_person",
   "fan_pct": 45,
   "target": { "pan_deg": 112, "tilt_deg": 10 },
-  "pm25_corrected": 21.4,
-  "alerts": [
-    {
-      "type": "pm_high",
-      "level": "warn",
-      "title": "PM2.5 สูง",
-      "text": "PM2.5 68 µg/m³ เกิน 10 นาที",
-      "since": 1794383160
-    }
-  ]
+  "alerts": ["pm_high"]
 }
 ```
 
-**Cause record** (`cause/latest` and `cause/history/{id}`):
+**Cause record** (`cause/latest` is written by the uploader; `cause/history/{id}` is planned, no code yet). The cause modules also publish `features`, `reason`, `rules_cause` and `rules_confidence` on MQTT; they stay on the Jetson:
 ```ts
 interface CauseRecord {
-  id: string;               // "c" + ts
+  id: string;               // "c" + ts. On MQTT only: the uploader does not copy `id` yet
   ts: unix_seconds;
   cause: "window_open" | "cooking" | "incense_candle" | "smoking" | "outdoor_infiltration" | "unknown";
   confidence: float;       // 0 to 1
   source: "rules" | "cloud";
   advice_th: string;
-  pm25_corrected: float;
+  pm25_corrected: float;    // planned: neither the cause modules nor the uploader send it
 }
 ```
 ```json
@@ -326,11 +314,11 @@ interface CauseRecord {
 ```ts
 interface AlertRecord {
   ts: unix_seconds;
-  type: AlertType;
+  type: AlertType;          // planned: the uploader (PR #8) does not copy `type` into the record yet
   level: "info" | "warn" | "crit";
   title: string;
   text: string;
-  sent_to: string[];        // names of the channels that got it (see Notification channels)
+  sent_to: string[];        // planned: no notify module yet, so nothing sets it (see Notification channels)
 }
 ```
 ```json
@@ -363,25 +351,23 @@ type AlertType = "pm_high" | "node_offline" | "uart_fail" | "charge_cut_temp" | 
 
 **`health`**:
 ```ts
-interface HealthRecord {
-  ts: unix_seconds;               // added by the uploader
+interface HealthRecord {   // no `ts`: the uploader writes none (PR #4 relies on telemetry/node1/latest.ts)
   node1_online: boolean;
-  node1_last_seen: unix_seconds;
+  node1_last_seen: unix_seconds;   // on MQTT only: the uploader does not forward it yet
   node2_online: boolean;
-  node2_last_seen: unix_seconds;
+  node2_last_seen: unix_seconds;   // on MQTT only: not forwarded yet
   cpu_temp_c: float;
-  ram_pct: integer;
-  disk_pct: integer;
+  ram_pct: integer;                // on MQTT only: not forwarded yet
+  disk_pct: integer;               // on MQTT only: not forwarded yet
   pending_rows: integer;     // added by the uploader
   last_upload_ts: unix_seconds;   // added by the uploader
   filter_hours: float;
   pms_hours: float;
-  fan_rpm_ratio: float;
+  fan_rpm_ratio: float;            // on MQTT only: not forwarded yet
 }
 ```
 ```json
 {
-  "ts": 1794383760,
   "node1_online": true,
   "node1_last_seen": 1794383759,
   "node2_online": true,
@@ -396,7 +382,7 @@ interface HealthRecord {
   "fan_rpm_ratio": 0.97
 }
 ```
-- The fields other than `ts`, `pending_rows` and `last_upload_ts` come from `ab/gw/health`.
+- `health.py` publishes `ts`, `node*_online`, `node*_last_seen`, `cpu_temp_c`, `ram_pct`, `disk_pct`, `filter_hours`, `pms_hours` and `fan_rpm_ratio` on `ab/gw/health`. The uploader copies `node*_online`, `cpu_temp_c`, `filter_hours` and `pms_hours` and adds `pending_rows` and `last_upload_ts`; the rest is not forwarded yet (PR #6 vs PR #8).
 - `node*_online` follows `health.py` (offline after 30 s without data). `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min". The `node_offline` alert fires at the same moment `node*_online` turns false (30 s), never later.
 - `fan_rpm_ratio` is the RPM now divided by the RPM with a fresh filter at the same `fan_pct`. A falling ratio means the filter is clogging.
 - The dashboard shows the whole unit as offline when `telemetry/node1/latest.ts` is older than 90 s (the gateway-silent rule below; PR #4 reads this path).
@@ -416,7 +402,7 @@ The alert can never arrive after the web shows a node offline, because both foll
 interface HistoryRow {
   ts: unix_seconds;
   pm25: float | null;
-  pm25_corrected: float | null;
+  pm25_corrected: float | null;   // planned: the uploader averages pm25, temp_c, rh, fan_pct only
   temp_c: float | null;
   rh: float | null;
   fan_pct: integer | null;
@@ -427,7 +413,6 @@ interface HistoryRow {
   "1794383760": {
     "ts": 1794383790,
     "pm25": 17.0,
-    "pm25_corrected": 14.2,
     "temp_c": 29.1,
     "rh": 71,
     "fan_pct": 40
@@ -573,7 +558,7 @@ These add to the MQTT table above and leave it unchanged.
    ```ts
    type Node2CmdExtra = { field_test?: boolean; reset_fault?: boolean };   // sent with Node2Cmd
    ```
-9. **`ab/gw/alert`**: one-off alerts from modules other than the brain, `{ ts, type, level, title, text }`; the uploader writes each to `alerts/{key}`. Only the UART bridge uses it (`uart_fail`), so `decision.py` must not also put `uart_fail` in `state.alerts`.
+9. **`ab/gw/alert`**: one-off alerts from modules other than the brain, `{ ts, type, level, title, text }`; the uploader writes each to `alerts/{key}`. The UART bridge still sends the older names `severity` and `msg`; the uploader maps them to `level` and `text`. Only the UART bridge uses it (`uart_fail`), so `decision.py` must not also put `uart_fail` in `state.alerts`.
 10. **`ab/gw/uploader`**, every 10 s, for `health.py`:
     ```ts
     interface GwUploader {
