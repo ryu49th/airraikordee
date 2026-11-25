@@ -161,10 +161,10 @@ General rules:
 
 | Path | Written by | Read by | How | Rate | Payload |
 |---|---|---|---|---|---|
-| `telemetry/node1/latest` | uploader | dashboard | overwrite | 1 s | Node 1 record (fields below) |
-| `telemetry/node2/latest` | uploader | dashboard | overwrite | 1 s | Node 2 record (fields below) |
-| `env/latest` | uploader | dashboard | overwrite | 1 s | last `ab/gw/env` |
-| `state` | uploader | dashboard | overwrite | 1 s | last `ab/gw/state` |
+| `telemetry/node1/latest` | uploader | dashboard | overwrite | 2 s | Node 1 record (fields below) |
+| `telemetry/node2/latest` | uploader | dashboard | overwrite | 2 s | Node 2 record (fields below) |
+| `env/latest` | uploader | dashboard | overwrite | 2 s | last `ab/gw/env` |
+| `state` | uploader | dashboard | overwrite | 2 s | last `ab/gw/state` |
 | `history/node1/{minuteTs}` | uploader | dashboard | PUT | 1 min | 1-minute averages (retention 48 h is planned, nothing deletes old rows yet) |
 | `history/node1_m15/{ts}` | uploader | dashboard | PUT | 15 min | planned, no code yet: 15-minute averages, kept 30 days |
 | `cause/latest` | uploader | dashboard | overwrite | each result | cause record |
@@ -395,7 +395,7 @@ interface HealthRecord {   // no `ts`: the uploader writes none (PR #4 relies on
 | `node_offline` alert | the same moment: `node*_online` turns false (30 s) | the gateway, from the same flag | an alert in the list |
 | Whole unit / gateway silent | `telemetry/node1/latest.ts` older than 90 s | the dashboard, from its own clock | the whole unit offline |
 
-The alert can never arrive after the web shows a node offline, because both follow the same `node*_online` flag. The 90 s rule is a separate check: the unit sends telemetry every 1 s and `health` every 10 s, so 90 s of silence (9 missed health heartbeats) means the whole unit or gateway is down, not that one node is late.
+The alert can never arrive after the web shows a node offline, because both follow the same `node*_online` flag. The 90 s rule is a separate check: the uploader writes `latest` at most every 2 s and `health` every 10 s, so 90 s of silence (9 missed health heartbeats) means the whole unit or gateway is down, not that one node is late.
 
 **History, two time frames** (`history/node1/{minuteTs}` and `history/node1_m15/{ts}`): key = unix seconds at the start of the bucket (`ts − ts % 60` for 1 min, `ts − ts % 900` for 15 min), 10 digits, so keys sort by time. A repeated write replaces the row instead of adding one. Values are averages over the bucket; `ts` = the last sample in it.
 ```ts
@@ -579,7 +579,7 @@ The code wins; this table lists what the doc describes and whether code exists. 
 |---|---|---|
 | MQTT topics, QoS, retain, `seq`/`ts` rules | in code | `gateway/common` (PR #8), simulators (#2) |
 | UART bridge: 300 ms ack, 3 retries, 500 ms heartbeat, `uart_fail` alert | in code | `bridge/uart_bridge.py` (PR #8) |
-| Uploader: outbox, multi-path PATCH, token refresh, rates 1 s, minute history, alert keys | in code | `cloud/uploader.py` (PR #8) |
+| Uploader: outbox, multi-path PATCH, token refresh, rates (`uploader.rates_s`), minute history, alert keys | in code | `cloud/uploader.py` (PR #8) |
 | `health.py`: 30 s offline flag, 10 s `ab/gw/health`, filter hours, RPM ratio | in code | PR #6 |
 | `config_listener.py`: six config fields, retained `ab/gw/config`, manual fan resend | in code | PR #5 |
 | `ab/gw/uploader` stats every 10 s | in code | PR #8 |
@@ -594,4 +594,4 @@ The code wins; this table lists what the doc describes and whether code exists. 
 | Health fields `node*_last_seen`, `ram_pct`, `disk_pct`, `fan_rpm_ratio` in Firebase | on MQTT only | uploader `HEALTH_FIELDS` |
 | `database.rules.json` | not in the repo | Farn's card AIR-49 |
 
-Still open (needs Farn): whether the web needs 1 s latest writes or 2 to 5 s, and whether `pm_alert` stays at 35 (the gateway spec still says 55).
+Decided by Farn on 25 Nov: `*/latest` is written every 2 s (the code in PR #8 and #6 still has 1 s in `uploader.rates_s`; change it to 2), `pm_alert` stays 35 (the gateway spec text still says 55), and the team labels removed from the doc stay removed.
