@@ -58,7 +58,7 @@ Everything goes under `devices/<DEVICE_ID>/` with one PATCH per batch. The Jetso
 `device-<DEVICE_ID>@devices.airraikordee.example`, so `.env` needs `FIREBASE_DB_URL`, `FIREBASE_API_KEY`,
 `DEVICE_ID` and `DEVICE_PASSWORD` (the password comes from Farn privately, never in Git).
 `*/latest` and `state` are overwritten at most every 2 s, `history/node1/<minute>` gets one averaged row per
-minute, `health` every 30 s, `cause/latest` and `alerts/<id>` on every event.
+minute, `health` every 10 s, `cause/latest` and `alerts/<id>` on every event.
 Not done here: reading `config` back down (AIR-97).
 
 ## Simulators (no hardware needed)
