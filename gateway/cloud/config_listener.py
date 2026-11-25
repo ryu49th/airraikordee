@@ -9,6 +9,7 @@ uploader), checks each field, and:
 It also copies the dashboard buttons: every entry in devices/<deviceId>/ui_cmd ({ts, by, cmd, channel?}) is
 published on ab/gw/ui_cmd and then deleted from Firebase (the dashboard shows "received" when it is gone).
 Unknown commands and entries older than ui_cmd_max_age_s are deleted without being published.
+The same process copies the "ใช่ / ไม่ใช่" dust-cause feedback into the accuracy table (ai/feedback.py).
 
 Fields (Farn's data contract): pm_alert, night_start, night_end, manual_fan_pct, fan_mode, filter_reset_ts.
 A missing or invalid field falls back to config.yaml. If Firebase cannot be reached the last good settings stay
@@ -279,11 +280,17 @@ def main():
     client.start(wait=False)
     listener = ConfigListener(cfg, client, firebase, cache)
     listener.start()
+    from ai.feedback import Feedback, FeedbackLog
+    feedback = Feedback(cfg, client, firebase,
+                        FeedbackLog(os.path.join(writable_dir(cfg.get("data_dir", "/var/lib/airraikordee"), "data"),
+                                                 "cause_log.db")))
+    feedback.start()  # "ใช่ / ไม่ใช่" on the dust cause -> accuracy table
     log.info("config_listener polling devices/%s/config every %.0f s", device_id, listener.poll_s)
 
     try:
         run_until_signal(lambda: log.info("stats %s", listener.stats), tick_s=60)
     finally:
+        feedback.stop()
         listener.stop()
         client.stop()
 
