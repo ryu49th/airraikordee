@@ -12,7 +12,7 @@ Paths and fields follow the Firebase data contract (docs/protocol.md, "Firebase 
   state                    mode, fan_pct, target, alerts
   cause/latest             latest dust cause
   alerts/<key>             each new item in state.alerts, and each ab/gw/alert
-  health                   every 30 s, with pending_rows and last_upload_ts from this uploader
+  health                   every 10 s (uploader.health_every_s), with pending_rows and last_upload_ts from this uploader
 The Jetson signs in with its device account (device-<deviceId>@devices.airraikordee.example) and refreshes
 the 1-hour ID token before it expires, or after an HTTP 401.
 
@@ -44,7 +44,7 @@ ALERT_FIELDS = ("ts", "level", "title", "text", "sent_to")
 HEALTH_FIELDS = ("node1_online", "node2_online", "cpu_temp_c", "pending_rows", "last_upload_ts", "filter_hours",
                  "pms_hours")
 
-DEFAULT_RATES = {"telemetry/node1/latest": 1, "telemetry/node2/latest": 1, "env/latest": 1, "state": 1}
+DEFAULT_RATES = {"telemetry/node1/latest": 2, "telemetry/node2/latest": 2, "env/latest": 2, "state": 2}
 ALERT_TITLES = {
     "pm25_high": "PM2.5 สูง", "pm_high": "PM2.5 สูง", "node_offline": "อุปกรณ์ออฟไลน์",
     "uart_fail": "Node 1 ไม่ตอบคำสั่ง", "charge_cut_temp": "หยุดชาร์จเพราะร้อนเกิน", "charge_fault": "ที่ชาร์จขัดข้อง",
@@ -304,7 +304,7 @@ class Uploader(object):
         self.backoff_min = float(u.get("backoff_min_s", 1))
         self.backoff_max = float(u.get("backoff_max_s", 300))
         self.stats_every_s = float(u.get("stats_every_s", 10))
-        self.health_every_s = float(u.get("health_every_s", 30))
+        self.health_every_s = float(u.get("health_every_s", 10))
         self.node_offline_s = float(u.get("node_offline_s", 30))
         self.rates = dict(DEFAULT_RATES)
         self.rates.update(u.get("rates_s") or {})
