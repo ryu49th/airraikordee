@@ -15,3 +15,5 @@ cad/out/
 # OS / editor
 .DS_Store
 .vscode/
+# dashboard: each person's Firebase web config (copy config.example.js)
+dashboard/public/config.js
