@@ -173,7 +173,7 @@ General rules:
 | `health` | uploader | dashboard | overwrite | 10 s (`uploader.health_every_s`; the code default is 30 s) | health record |
 | `feedback/{push_id}` | owner (dashboard) | uploader | POST | button press | "ไม่ใช่" on a dust cause (the dashboard writes it; no gateway code reads it yet) |
 | `config` | owner (dashboard) | uploader | PATCH | when saved | settings |
-| `ui_cmd/{push_id}` | owner (dashboard) | uploader | POST | button press | one-shot command (planned: no dashboard button and no gateway code yet) |
+| `ui_cmd/{push_id}` | owner (dashboard) | uploader | POST | button press | one-shot command (buttons in the dashboard, PR #13; the gateway side is `config_listener.py`) |
 
 
 Outside `devices/`:
@@ -583,10 +583,12 @@ The code wins; this table lists what the doc describes and whether code exists. 
 | `ab/gw/uploader` stats every 10 s | in code | PR #8 |
 | Cause modules (rules, cloud), vision, `ab/gw/cause`, `ab/gw/vision` | in code | PR #8 |
 | Dashboard: sign-in, claim, overview, history, alerts, health, settings (six config fields), demo mode | in code | PR #4 |
-| `decision.py` (`ab/gw/state`, `ab/node1/cmd`, `ab/node2/cmd`, modes, `pm_high` and other alerts, `fan_table`, night mode, charge rule) | planned, no code | `gateway/brain/` is empty |
-| `node_offline` alert | planned: the flag exists, nothing sends the alert | `health.py` |
-| Notification channels (Discord, `deviceSecrets`, `config.notify`) | planned, no code | `gateway/notify/` is empty |
-| `ui_cmd` handling, `ab/gw/ui_cmd`, dashboard buttons | planned, no code | |
+| `decision.py`: `ab/gw/state`, fan curve, modes, charge rule, `pm_high` and the other state alerts | in code | PR #11 |
+| `node_offline` alert on `ab/gw/alert` | in code | `health.py` (PR #6) |
+| Discord alerts, one per type per 15 min (webhook from `.env`) | in code | `notify/discord.py` (PR #10) |
+| Notification channels from the dashboard (`deviceSecrets`, `config.notify`) | planned, no code | |
+| `ui_cmd` copied to `ab/gw/ui_cmd` and deleted, handled by `decision.py`, `health.py`, `notify/discord.py` | in code | `config_listener.py` (PR #5), PR #12 |
+| Dashboard `ui_cmd` buttons (`{ts, by, cmd, channel?}`) | in code | PR #13 |
 | `feedback` copy to the SQLite accuracy table | planned, no code | |
 | `cause/history`, `history/node1_m15`, retention deletes | planned, no code | |
 | Health fields `node*_last_seen`, `ram_pct`, `disk_pct`, `fan_rpm_ratio` in Firebase | on MQTT only | uploader `HEALTH_FIELDS` |
