@@ -15,7 +15,8 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 | `ai/cause_cloud.py` | blurred survey photos → Claude (`claude-opus-5-5`, JSON answer) when the rules are unsure | done, needs `AI_API_KEY` |
 | `voice/voice.py` | wake word -> INMP441 clip from Node 1 -> Google STT -> command (keywords, Claude fallback) -> Google TTS on the speaker (AIR-20) | done, needs the keys + Node 1 audio frames |
 | `notify/discord.py` | alerts (`ab/gw/alert`, `ab/gw/state`) -> Discord webhook, one per type per 15 min, blurred photo on PM alerts, 429 retry_after (AIR-52) | done, needs `DISCORD_WEBHOOK_URL` |
-| `sensors/ brain/` | other modules | todo |
+| `brain/decision.py` | PM humidity correction + fan table, modes (night / survey / aim_person / idle), aiming, `charge_allowed` for Node 2, state alerts -> `ab/gw/state` (AIR-13/14/15) | done, tested with the simulators |
+| `sensors/` | BME280 reader (AIR-12) | todo |
 | `udev/99-airraikordee.rules` | stable `/dev/airraikordee-node1` name for Node 1 | done |
 | `tests/` | pytest, no hardware needed | |
 
@@ -41,6 +42,7 @@ The gateway uses its own Mosquitto on **port 1884**, run as user `eiclite` witho
 ```bash
 python3 -m bridge.uart_bridge
 python3 -m cloud.uploader
+python3 -m brain.decision
 python3 -m cloud.config_listener
 python3 -m health.health
 python3 -m vision.vision
@@ -96,6 +98,23 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
 - Try it without the ESP32: `python3 -m tools.sim_node1 --voice-wav hello.wav` (16 kHz mono), run voice.py, press
   `w`. `--drop-audio 0.1` drops frames to test the resend.
 
+## Decision (brain/decision.py, AIR-13/14/15)
+Once a second, from the latest messages:
+- **PM:** `pm25_corrected = pm25 / (1 + k * max(0, rh - 60) / 40)` (`rh` from `ab/gw/env`; without the BME280
+  reader there is no correction). Fan % from `decision.fan_table`, capped at `night_fan_max` at night, sent on
+  change and every 60 s. With `fan_mode: manual` on the dashboard, config_listener drives the fan instead.
+- **Mode** (first match): `night` (dashboard night hours; fan capped, head keeps its aim) → `survey` (vision.py is
+  taking its 8 photos; it starts surveys itself) → `aim_person` (someone seen in the last 10 min; P-control with
+  3° deadband and 10° max step) → `idle` (head back to the room centre once).
+- **Charging (rule 4.3):** `charge_allowed` = docked AND a person seen (or `{"cmd":"confirm_present"}` on
+  `ab/gw/ui_cmd`) in the last 15 min AND battery temperature known and < 45 °C. Sent to `ab/node2/cmd` on change
+  and every 30 s, because the box stops by itself 60 s after the last one.
+- **Alerts** in `ab/gw/state.alerts`: `pm_high` (above `pm_alert` for 10 min, ends below 90 %), `charge_cut_temp`,
+  `charge_fault`, `battery_low` (< 25 %), `charge_full`, `filter_clogged` (RPM ratio < 0.7 for 10 min),
+  `stop_pressed`. Nothing goes to Node 1 while the stop button is held.
+- Try it: `tools.sim_node1` + `tools.sim_node2` (without `--auto-allow`) + `brain.decision`; press `d` in sim_node1
+  and watch the fan rise, and charging stops 15 min after the last person (no vision running = nobody seen).
+
 ## Discord alerts (notify/discord.py, AIR-52)
 - Put the webhook in `.env`: Discord channel -> Edit Channel -> Integrations -> Webhooks -> New Webhook ->
   Copy Webhook URL -> `DISCORD_WEBHOOK_URL=...` (the URL is the password: never in Git, chat or screenshots).
@@ -106,8 +125,8 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
 - `pm_high` gets the newest survey photo (at most 15 min old) with faces blurred on the Jetson; without OpenCV or
   the face model no photo is sent at all.
 - HTTP 429 waits Discord's `retry_after`; other failures retry with backoff, up to 5 tries.
-- Alert sources today: `uart_fail` (uart_bridge) and `node_offline` (health.py, once when a node that was online
-  goes silent for 30 s). `pm_high` and the charge alerts come from `decision.py`, which is not written yet.
+- Alert sources: `uart_fail` (uart_bridge), `node_offline` (health.py, once when a node that was online goes
+  silent for 30 s) and the state alerts from `brain/decision.py` (`pm_high`, charge alerts, ...).
 
 ## Firebase (uploader)
 Paths and fields follow Farn's data contract (`docs/protocol.md` → "Firebase Realtime Database").
