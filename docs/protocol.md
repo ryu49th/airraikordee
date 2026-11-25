@@ -568,38 +568,3 @@ These add to the MQTT table above and leave it unchanged.
       last_error: string | null;
     }
     ```
-
----
-
-## Implementation status (checked against PRs #1 to #8 and main on 25 Nov 2026)
-
-The code wins; this table lists what the doc describes and whether code exists. "PR" is the PR whose branch contains it.
-
-| Item | State | Where |
-|---|---|---|
-| MQTT topics, QoS, retain, `seq`/`ts` rules | in code | `gateway/common` (PR #8), simulators (#2) |
-| UART bridge: 300 ms ack, 3 retries, 500 ms heartbeat, `uart_fail` alert | in code | `bridge/uart_bridge.py` (PR #8) |
-| Uploader: outbox, multi-path PATCH, token refresh, rates (`uploader.rates_s`), minute history, alert keys | in code | `cloud/uploader.py` (PR #8) |
-| `health.py`: 30 s offline flag, 10 s `ab/gw/health`, filter hours, RPM ratio | in code | PR #6 |
-| `config_listener.py`: six config fields, retained `ab/gw/config`, manual fan resend | in code | PR #5 |
-| `ab/gw/uploader` stats every 10 s | in code | PR #8 |
-| Cause modules (rules, cloud), vision, `ab/gw/cause`, `ab/gw/vision` | in code | PR #8 |
-| Dashboard: sign-in, claim, overview, history, alerts, health, settings (six config fields), demo mode | in code | PR #4 |
-| `decision.py`: `ab/gw/state`, fan curve, modes, charge rule, `pm_high` and the other state alerts | in code | PR #11 |
-| `node_offline` alert on `ab/gw/alert` | in code | `health.py` (PR #6) |
-| Discord alerts, one per type per 15 min (webhook from `.env`) | in code | `notify/discord.py` (PR #10) |
-| Notification channels from the dashboard (`deviceSecrets`, `config.notify`) | planned, no code | |
-| `ui_cmd` copied to `ab/gw/ui_cmd` and deleted, handled by `decision.py`, `health.py`, `notify/discord.py` | in code | `config_listener.py` (PR #5), PR #12 |
-| Dashboard `ui_cmd` buttons (`{ts, by, cmd, channel?}`) | in code | PR #13 |
-| `feedback` copy to the SQLite accuracy table | planned, no code | |
-| `cause/history`, `history/node1_m15`, retention deletes | planned, no code | |
-| Health fields `node*_last_seen`, `ram_pct`, `disk_pct`, `fan_rpm_ratio` in Firebase | on MQTT only | uploader `HEALTH_FIELDS` |
-| `database.rules.json` | in the repo (`dashboard/`), 39 emulator tests pass, **deployed to the real project on 25 Nov** (it keeps the LINE `linkcode` and the `ts` indexes the earlier live rules had) | Farn |
-| Node 1 firmware (ESP32-S3): USB JSON link, stepper pan, louver servo, fan PWM and relay, PMS5003, NTC, stop button, 2 s watchdog | in code, pan and pins tested on the hardware 24 Nov | PR #17 |
-| Node 2 firmware (ESP8266): MQTT, charge state machine with INA226, DS18B20, ChulaWiFi login option | in code | PR #17 |
-| Node 1 wake word (microphone) | planned, not in the firmware | pins reserved |
-| Pan and tilt limits | **gap**: firmware stops at ±90 and ±20 until a limit switch is fitted, `decision.py` still uses ±178 and ±30 | gateway config or firmware |
-
-Rule for conflicts: physical facts (pins, ranges, speeds, chips) follow the firmware that runs on the hardware; the wire format follows this file where the gateway code and tests already depend on it; design goals stay here marked planned until the hardware supports them.
-
-Decided by Farn on 25 Nov: `*/latest` is written every 2 s (the code in PR #8 and #6 still has 1 s in `uploader.rates_s`; change it to 2), `pm_alert` stays 35 (the gateway spec text still says 55), and the team labels removed from the doc stay removed.
