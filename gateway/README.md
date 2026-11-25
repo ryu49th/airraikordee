@@ -16,7 +16,7 @@ Spec and build order: `JETSON_GATEWAY_SPEC.md`. Secrets: copy `.env.example` to 
 | `voice/voice.py` | wake word -> INMP441 clip from Node 1 -> Google STT -> command (keywords, Claude fallback) -> Google TTS on the speaker (AIR-20) | done, needs the keys + Node 1 audio frames |
 | `notify/discord.py` | alerts (`ab/gw/alert`, `ab/gw/state`) -> Discord webhook, one per type per 15 min, blurred photo on PM alerts, 429 retry_after (AIR-52) | done, needs `DISCORD_WEBHOOK_URL` |
 | `brain/decision.py` | PM humidity correction + fan table, modes (night / survey / aim_person / idle), aiming, `charge_allowed` for Node 2, state alerts -> `ab/gw/state` (AIR-13/14/15) | done, tested with the simulators |
-| `sensors/` | BME280 reader (AIR-12) | todo |
+| `sensors/bme280_reader.py` | BME280 on I2C bus 1 -> `ab/gw/env {temp_c, rh, pressure_hpa}` every 2 s, Bosch compensation, reopens the bus after errors (AIR-12) | done, needs the sensor |
 | `udev/99-airraikordee.rules` | stable `/dev/airraikordee-node1` name for Node 1 | done |
 | `tests/` | pytest, no hardware needed | |
 
@@ -43,6 +43,7 @@ The gateway uses its own Mosquitto on **port 1884**, run as user `eiclite` witho
 python3 -m bridge.uart_bridge
 python3 -m cloud.uploader
 python3 -m brain.decision
+python3 -m sensors.bme280_reader
 python3 -m cloud.config_listener
 python3 -m health.health
 python3 -m vision.vision
