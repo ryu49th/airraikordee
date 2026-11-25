@@ -112,9 +112,9 @@ def test_node2_maps_docked_to_plugged_and_takes_battery_temp_from_node1(outbox):
         "plugged": True, "est_percent": 64}
 
 
-def test_latest_paths_are_throttled_to_1s(outbox):
+def test_latest_paths_are_throttled_to_2s(outbox):
     up, clock = make(outbox, FakeFirebase())
-    for i in range(10):                               # 5 Hz for 2 s
+    for i in range(20):                               # 5 Hz for 4 s
         up.on_message(TOPIC_GW_ENV, {"ts": clock.t, "temp_c": 30, "rh": 60, "pressure_hpa": 1006})
         clock.t += 0.2
     assert sum(1 for r in outbox.fetch(100) if r[1] == "env/latest") == 2
@@ -210,7 +210,7 @@ def test_minute_history_ignores_late_records():
     assert h.add(200, {"pm25": 5}) is None
 
 
-def test_health_every_30s_with_uploader_counts_and_node_online(outbox):
+def test_health_every_10s_with_uploader_counts_and_node_online(outbox):
     fb = FakeFirebase()
     up, clock = make(outbox, fb)
     up.on_message(TOPIC_GW_HEALTH, {"ts": clock.t, "cpu_temp_c": 52, "filter_hours": 312, "ram_pct": 61,
@@ -218,7 +218,7 @@ def test_health_every_30s_with_uploader_counts_and_node_online(outbox):
     up.on_message(TOPIC_NODE1_TELEMETRY, {"ts": clock.t, "pm25": 5})
     up.tick()
     assert "health" not in fb.stored and not [r for r in outbox.fetch(100) if r[1] == "health"]
-    clock.t += 30
+    clock.t += 10
     up.on_message(TOPIC_NODE1_TELEMETRY, {"ts": clock.t, "pm25": 5})
     up.tick()
     drain(up)
