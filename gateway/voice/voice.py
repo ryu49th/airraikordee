@@ -459,7 +459,8 @@ class Player(object):
 # --- the voice service ---------------------------------------------------------------------------------
 
 class Voice(object):
-    def __init__(self, cfg, mqtt, stt, tts, llm, player, clock=time.time):
+    def __init__(self, cfg, mqtt, stt, tts, llm, player, clock=time.time, text_out=None):
+        self.text_out = text_out   # chat mode: replies are printed instead of spoken
         c = dict(DEFAULTS)
         c.update(cfg.get("voice") or {})
         self.c = c
@@ -589,6 +590,15 @@ class Voice(object):
                 self.say("offline")
                 result["source"] = "offline"
                 return self._report(result, wake_at)
+            return self.handle_text(text, sid, wake_at, result)
+        finally:
+            self.busy = False
+
+    def handle_text(self, text, sid=0, wake_at=None, result=None):
+        """Text (from STT, or typed in --chat) -> intent -> action -> reply. Returns the ab/gw/voice record."""
+        result = result or {"ts": now_ts(), "sid": sid, "text": None, "intent": None, "source": None,
+                            "reply": None, "ok": False}
+        try:
             result["text"] = text
             if not text:
                 self.say("no_speech")
@@ -695,6 +705,9 @@ class Voice(object):
         return self.say_text(REPLIES[key])
 
     def say_text(self, text):
+        if self.text_out is not None:
+            self.text_out(text)
+            return text
         if self.night:
             log.info("night, not spoken: %s", text)
             return text
@@ -720,6 +733,55 @@ def prepare(tts, extra=()):
     return made, len(texts)
 
 
+class _PrintMqtt(object):
+    """--chat without --live: show what would go out instead of sending it."""
+
+    def subscribe(self, topic, handler, qos=1):
+        pass
+
+    def publish(self, topic, msg, qos=1, retain=False):
+        if topic == TOPIC_GW_VOICE:
+            return True
+        shown = dict((k, v) for k, v in msg.items() if k not in ("seq", "ts"))
+        print("   [MQTT %s] %s" % (topic, json.dumps(shown, ensure_ascii=False)))
+        return True
+
+
+def chat(cfg, llm, live=False, read=input, write=print):
+    """Type a command, get the unit's answer, like talking to it. Ctrl+D or "exit" to stop."""
+    log.setLevel(logging.WARNING)  # keep the conversation readable; warnings (e.g. Claude errors) still show
+    if live:
+        from common.mqtt_client import MqttClient
+        mqtt = MqttClient("voice_chat", cfg)
+        mqtt.start(wait=True)
+    else:
+        mqtt = _PrintMqtt()
+        cfg = dict(cfg)
+        cfg["voice"] = dict(cfg.get("voice") or {}, cause_wait_s=1)
+    voice = Voice(cfg, mqtt, None, None, llm, None, text_out=lambda t: write("เครื่อง: " + t))
+    if live:
+        for topic, handler in ((TOPIC_NODE1_TELEMETRY, voice.on_telemetry), (TOPIC_GW_VISION, voice.on_vision),
+                               (TOPIC_GW_CAUSE, voice.on_cause), (TOPIC_GW_STATE, voice.on_state)):
+            mqtt.subscribe(topic, handler, qos=0)
+    write("พิมพ์คำสั่งแทนการพูด เช่น หันมาทางนี้ / ฟอกแรงขึ้น / เบาลง / ทำไมฝุ่นเยอะ / หยุด  (exit = ออก)")
+    write("โหมด: %s, Claude: %s" % ("ส่งคำสั่งจริงทาง MQTT" if live else "แค่แสดงคำสั่ง ไม่ส่งจริง",
+                                    "เปิด" if llm.api_key else "ปิด (ไม่มี AI_API_KEY ใช้แค่คำสำคัญ)"))
+    while True:
+        try:
+            text = read("คุณ: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            write("")
+            break
+        if text.lower() in ("exit", "quit", "ออก"):
+            break
+        if not text:
+            continue
+        r = voice.handle_text(text)
+        write("   (%s, %s)" % (r.get("intent"), r.get("source")))
+    if live:
+        mqtt.stop()
+
+
 def main():
     import argparse
 
@@ -734,6 +796,10 @@ def main():
     ap.add_argument("--prepare", action="store_true", help="make the offline reply WAVs, then exit")
     ap.add_argument("--say", metavar="TEXT", help="speak one sentence on the speaker, then exit")
     ap.add_argument("--wav", metavar="FILE", help="run one 16 kHz mono WAV through STT + intent (no MQTT action)")
+    ap.add_argument("--chat", action="store_true",
+                    help="type commands instead of speaking; replies are printed (no microphone, STT or speaker)")
+    ap.add_argument("--live", action="store_true",
+                    help="with --chat: really send the commands on MQTT (default: only print them)")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -756,6 +822,9 @@ def main():
         return
     if args.say:
         player.play(tts.synthesize(args.say))
+        return
+    if args.chat:
+        chat(cfg, llm, live=args.live)
         return
     if args.wav:
         r = wave.open(args.wav, "rb")

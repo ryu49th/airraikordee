@@ -333,3 +333,14 @@ def test_night_mode_runs_commands_without_speaking():
     v.on_state(TOPIC_GW_STATE, {"mode": "idle"})
     v.handle_clip(2, b"", 16000)
     assert tts.said == [REPLIES["stop"]]
+
+
+def test_chat_mode_types_commands_and_prints_replies(capsys):
+    from voice.voice import ClaudeIntent, chat
+    lines = iter(["ฟอกแรงขึ้น", "หยุด", "วันนี้เป็นไง", "exit"])
+    out = []
+    chat({}, ClaudeIntent("", None, DEFAULTS), read=lambda prompt: next(lines), write=out.append)
+    printed = capsys.readouterr().out
+    assert "เครื่อง: " + REPLIES["fan_up"] in out and "เครื่อง: " + REPLIES["stop"] in out
+    assert "เครื่อง: " + REPLIES["unknown"] in out              # no AI key: keywords only
+    assert '"cmd": "fan", "pct": 75' in printed and '"cmd": "stop"' in printed   # shown, not sent
