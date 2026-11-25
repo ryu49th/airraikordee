@@ -68,6 +68,7 @@ On a laptop the logs and the outbox go to `gateway/logs/` and `gateway/data/` (b
    ```
    `audio` is a clip number Node 1 picks per wake. These lines carry no `seq` and get no `ack`; the bridge
    forwards them on `ab/node1/audio`. 32 kB/s needs the ESP32-S3's **native USB (USB CDC)** port.
+   Firmware side: `node1/examples/voice_stream_test/VoiceStream.h` (drop-in, compiled for the ESP32-S3).
 3. voice.py answers on `ab/node1/cmd` with `{"cmd":"audio_ack","sid":12,"missing":[5,9]}`: Node 1 resends those
    frames and the `end` line again (up to 3 rounds). `missing: []` means done, free the clip (keep it in PSRAM
    until then, or 10 s at most).
