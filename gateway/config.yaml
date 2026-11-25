@@ -123,3 +123,12 @@ voice:
   audio_retries: 3                  # rounds of asking Node 1 for missing frames
   cause_wait_s: 20                  # "ทำไมฝุ่นเยอะ": wait this long for cause_rules
   llm_timeout_s: 15
+
+# --- notify/discord.py: alerts -> Discord webhook (AIR-52); the URL is DISCORD_WEBHOOK_URL in .env ---
+notify:
+  discord:
+    cooldown_min: 15                # one message per alert type in this window
+    photo_for: [pm_high]            # alert types that get the newest survey photo (faces blurred first)
+    photo_max_age_s: 900
+    max_attempts: 5
+    unit_name: AirRaiKorDee

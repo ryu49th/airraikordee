@@ -40,7 +40,7 @@ ENV_FIELDS = ("ts", "temp_c", "rh", "pressure_hpa")
 HISTORY_FIELDS = ("pm25", "temp_c", "rh", "fan_pct")
 STATE_FIELDS = ("mode", "fan_pct", "target", "alerts")
 CAUSE_FIELDS = ("ts", "cause", "confidence", "source", "advice_th")
-ALERT_FIELDS = ("ts", "level", "title", "text", "sent_to")
+ALERT_FIELDS = ("ts", "type", "level", "title", "text", "sent_to")
 HEALTH_FIELDS = ("node1_online", "node2_online", "cpu_temp_c", "pending_rows", "last_upload_ts", "filter_hours",
                  "pms_hours")
 
