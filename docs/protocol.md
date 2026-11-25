@@ -42,8 +42,8 @@ interface Node1Telemetry {
   pm25: integer;            // µg/m³
   pm10: integer;            // µg/m³
   fan_rpm: integer;         // rpm, 0 to about 1700
-  pan_deg: float;           // degrees, -180 to 180, 1 decimal
-  tilt_deg: float;          // degrees, -30 to 30, 1 decimal
+  pan_deg: float;           // degrees, -90 to 90 (0 = front, + = right), 1 decimal
+  tilt_deg: float;          // degrees, -20 to 20 (louver servo 90 to 130, 0 = middle), 1 decimal
   button: boolean;          // true while the stop button is pressed
 }
 
@@ -319,7 +319,7 @@ interface CauseRecord {
 ```ts
 interface AlertRecord {
   ts: unix_seconds;
-  type: AlertType;          // planned: the uploader (PR #8) does not copy `type` into the record yet
+  type: AlertType;
   level: "info" | "warn" | "crit";
   title: string;
   text: string;
@@ -397,7 +397,7 @@ interface HealthRecord {   // no `ts`: liveness comes from telemetry/node1/lates
 | Rule | Value | Evaluated by | What the web shows |
 |---|---|---|---|
 | One node is offline | 30 s without a message from that node | `health.py` (sets `node*_online` = false) | that node offline, "offline for N min" from `node*_last_seen` |
-| `node_offline` alert | the same moment: `node*_online` turns false (30 s) | the gateway, from the same flag | an alert in the list |
+| `node_offline` alert | the same moment: `node*_online` turns false (30 s) | `health.py`, from the same flag | an alert in the list |
 | Whole unit / gateway silent | `telemetry/node1/latest.ts` older than 90 s | the dashboard, from its own clock | the whole unit offline |
 
 The alert can never arrive after the web shows a node offline, because both follow the same `node*_online` flag. The 90 s rule is a separate check: the uploader writes `latest` at most every 2 s and `health` every 10 s, so 90 s of silence (9 missed health heartbeats) means the whole unit or gateway is down, not that one node is late.
@@ -424,7 +424,7 @@ interface HistoryRow {
   }
 }
 ```
-Charts read: 1 h = `limitToLast(60)` of `history/node1`, 24 h = `limitToLast(1440)`, 7 d = `limitToLast(672)` of `history/node1_m15`. After an outage there are gaps, so a chart that must end exactly at "now − window" uses `orderByKey().startAt(String(fromSec))` instead. The uploader deletes keys older than the retention (48 h for 1 min, 30 days for 15 min) once a day, and a 1-minute row older than 48 h survives only inside its 15-minute average.
+Charts read: 1 h = `limitToLast(60)` of `history/node1`, 24 h = `limitToLast(1440)`, 7 d = `limitToLast(10080)` of `history/node1`. After an outage there are gaps, so a chart that must end exactly at "now − window" uses `orderByKey().startAt(String(fromSec))` instead. The uploader deletes keys older than the retention (48 h for 1 min, 30 days for 15 min) once a day, and a 1-minute row older than 48 h survives only inside its 15-minute average.
 
 **`config`** (written by the owner). `config_listener.py` reads these fields and republishes them on `ab/gw/config`; a missing or invalid field falls back to `config.yaml`:
 ```ts
