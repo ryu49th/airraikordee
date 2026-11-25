@@ -203,10 +203,11 @@ Two kinds of Firebase Auth account sign in:
 
 The rules do not look at how an owner signs in. They check that `users/(uid)/devices/(deviceId)` exists for the signed-in `uid`. A device account is recognised by its email.
 
-Rules (`dashboard/database.rules.json`; this file is not in the repo yet, it lives in Farn's card AIR-49 and is added when he publishes the rules):
+Rules (`dashboard/database.rules.json`, tested with the Firebase emulator by `dashboard/rules-test`, 35 cases; the file is in the repo but not deployed yet, deploying is Farn's step: `firebase deploy --only database` from `dashboard/`):
 - Device account: writes the paths the uploader writes, and reads its own unit, including `config`, `ui_cmd`, `feedback` and `deviceSecrets/(deviceId)`.
 - Owner who claimed the unit: reads everything under `devices/(deviceId)/`; writes `config` and `feedback`; creates `ui_cmd` entries (cannot change an existing one; `by` must be the owner's `uid`; `cmd` must be one of the names below); writes `deviceSecrets/(deviceId)/(channel)`, whose value must start with `https://discord.com/api/webhooks/` and be at most 300 characters.
 - Another unit's account, another owner, and anyone signed out read nothing (E5).
+- Field checks (`.validate`): types and ranges follow the Records below; unknown fields are refused on `config`, `state`, `health`, `env`, `telemetry/*/latest`, `history`, `cause`, `alerts` and `feedback`. `config` accepts the same ranges the dashboard checks (`pm_alert` 5 to 500, `HH:MM`, `fan_mode`, `manual_fan_pct` 0 to 100). `alerts/{key}` can be written again with the same key, because the uploader retries a whole batch. `claims/(code)` records are created by the admin (console or Admin SDK, outside the rules); a signed-in owner can read one code (never list them) and can only set `used` from `false` to `true` for the unit named in it.
 
 The Jetson refreshes its 1-hour ID token before it expires and retries once after HTTP 401. The dashboard signs in, reads `users/(uid)/devices` to find its deviceId, then listens to the smallest branch each screen needs.
 
@@ -522,19 +523,16 @@ interface UiCmd {
 **`feedback/{push_id}`**: the "ไม่ใช่" button. The uploader copies it into the SQLite accuracy table and leaves it in Firebase.
 ```ts
 interface Feedback {
-  ts: unix_seconds;
-  by: string;              // uid
-  cause_id: string;
+  ts?: unix_seconds;       // planned: the dashboard (PR #4) does not send it yet; rules accept it
+  by?: string;             // uid; planned, same; the rules require it to equal the signed-in uid when present
+  cause_id?: string;       // planned, same
   cause_ts: unix_seconds;
   correct: boolean;
-  true_cause?: string;     // optional
+  true_cause?: string;     // optional, up to 40 characters
 }
 ```
 ```json
 {
-  "ts": 1794383760,
-  "by": "<uid>",
-  "cause_id": "c1794383760",
   "cause_ts": 1794383760,
   "correct": false,
   "true_cause": "incense_candle"
@@ -592,6 +590,6 @@ The code wins; this table lists what the doc describes and whether code exists. 
 | `feedback` copy to the SQLite accuracy table | planned, no code | |
 | `cause/history`, `history/node1_m15`, retention deletes | planned, no code | |
 | Health fields `node*_last_seen`, `ram_pct`, `disk_pct`, `fan_rpm_ratio` in Firebase | on MQTT only | uploader `HEALTH_FIELDS` |
-| `database.rules.json` | not in the repo | Farn's card AIR-49 |
+| `database.rules.json` | in the repo (`dashboard/`), 35 emulator tests pass, not deployed | deploy is Farn's step |
 
 Decided by Farn on 25 Nov: `*/latest` is written every 2 s (the code in PR #8 and #6 still has 1 s in `uploader.rates_s`; change it to 2), `pm_alert` stays 35 (the gateway spec text still says 55), and the team labels removed from the doc stay removed.
