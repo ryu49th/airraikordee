@@ -568,3 +568,30 @@ These add to the MQTT table above and leave it unchanged.
       last_error: string | null;
     }
     ```
+
+---
+
+## Implementation status (checked against PRs #1 to #8 and main on 25 Nov 2026)
+
+The code wins; this table lists what the doc describes and whether code exists. "PR" is the PR whose branch contains it.
+
+| Item | State | Where |
+|---|---|---|
+| MQTT topics, QoS, retain, `seq`/`ts` rules | in code | `gateway/common` (PR #8), simulators (#2) |
+| UART bridge: 300 ms ack, 3 retries, 500 ms heartbeat, `uart_fail` alert | in code | `bridge/uart_bridge.py` (PR #8) |
+| Uploader: outbox, multi-path PATCH, token refresh, rates 1 s, minute history, alert keys | in code | `cloud/uploader.py` (PR #8) |
+| `health.py`: 30 s offline flag, 10 s `ab/gw/health`, filter hours, RPM ratio | in code | PR #6 |
+| `config_listener.py`: six config fields, retained `ab/gw/config`, manual fan resend | in code | PR #5 |
+| `ab/gw/uploader` stats every 10 s | in code | PR #8 |
+| Cause modules (rules, cloud), vision, `ab/gw/cause`, `ab/gw/vision` | in code | PR #8 |
+| Dashboard: sign-in, claim, overview, history, alerts, health, settings (six config fields), demo mode | in code | PR #4 |
+| `decision.py` (`ab/gw/state`, `ab/node1/cmd`, `ab/node2/cmd`, modes, `pm_high` and other alerts, `fan_table`, night mode, charge rule) | planned, no code | `gateway/brain/` is empty |
+| `node_offline` alert | planned: the flag exists, nothing sends the alert | `health.py` |
+| Notification channels (Discord, `deviceSecrets`, `config.notify`) | planned, no code | `gateway/notify/` is empty |
+| `ui_cmd` handling, `ab/gw/ui_cmd`, dashboard buttons | planned, no code | |
+| `feedback` copy to the SQLite accuracy table | planned, no code | |
+| `cause/history`, `history/node1_m15`, retention deletes | planned, no code | |
+| Health fields `node*_last_seen`, `ram_pct`, `disk_pct`, `fan_rpm_ratio` in Firebase | on MQTT only | uploader `HEALTH_FIELDS` |
+| `database.rules.json` | not in the repo | Farn's card AIR-49 |
+
+Still open (needs Farn): whether the web needs 1 s latest writes or 2 to 5 s, and whether `pm_alert` stays at 35 (the gateway spec still says 55).
