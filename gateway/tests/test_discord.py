@@ -208,3 +208,30 @@ def test_health_publishes_node_offline_once():
     alerts = mqtt.on(TOPIC_GW_ALERT)
     assert len(alerts) == 1 and alerts[0]["type"] == "node_offline" and alerts[0]["level"] == "crit"
     assert "Node 1" in alerts[0]["text"]
+
+
+def test_test_button_ignores_the_cooldown():
+    n, hook, _, _ = make()
+    n.on_ui_cmd(None, {"cmd": "test_notify", "channel": "discord"})
+    n.on_ui_cmd(None, {"cmd": "test_notify"})
+    n.on_ui_cmd(None, {"cmd": "test_notify", "channel": "line"})
+    drain(n)
+    assert len(hook.posts) == 2 and hook.posts[0][0]["embeds"][0]["title"] == "ทดสอบการแจ้งเตือน"
+
+
+def test_health_reset_filter_button():
+    class Probe(object):
+        def cpu_temp_c(self):
+            return 40.0
+
+        def ram_pct(self):
+            return 30.0
+
+        def disk_pct(self):
+            return 20.0
+
+    h = Health({}, FakeMqtt(), Probe(), None, clock=Clock())
+    h.filter_hours = 120.0
+    h.baseline = {"50": 900}
+    h.on_ui_cmd(None, {"cmd": "reset_filter"})
+    assert h.filter_hours == 0.0 and h.baseline == {}

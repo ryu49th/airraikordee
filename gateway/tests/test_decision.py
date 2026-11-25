@@ -284,3 +284,19 @@ def test_closed_loop_charging_stops_when_nobody_is_there():
     assert any(charging[:900]) and charging[900] is True
     assert not any(charging[965:])  # 15 min after the person left (+ one refresh), charging is off
     assert b.charge_reason.startswith("nobody seen")
+
+
+def test_dashboard_buttons():
+    from common.protocol import TOPIC_GW_UI_CMD
+    b, mqtt, _ = make()
+    node1(b, pan_deg=20.0)
+    person(b, pan_err=-35.0, tilt_err=3.0)
+    b.on_ui_cmd(TOPIC_GW_UI_CMD, {"cmd": "aim_person"})
+    assert cmds(mqtt, "aim")[-1]["pan_deg"] == -15.0              # straight there, no 10 deg step limit
+    b.on_ui_cmd(TOPIC_GW_UI_CMD, {"cmd": "survey_now"})
+    assert mqtt.on("ab/gw/vision/cmd") == [{"cmd": "survey", "reason": "app"}]
+    b.on_ui_cmd(TOPIC_GW_UI_CMD, {"cmd": "reset_fault"})
+    assert mqtt.on(TOPIC_NODE2_CMD)[-1]["reset_fault"] is True
+    nobody(b)
+    b.on_ui_cmd(TOPIC_GW_UI_CMD, {"cmd": "aim_person"})
+    assert len(cmds(mqtt, "aim")) == 1
