@@ -2,7 +2,7 @@
 
 ### Wire format
 
-- **Transport:** MQTT 3.1.1 to the Mosquitto broker on the Jetson, port 1884 (the team's user-level broker; `MQTT_PORT` in `.env` wins; the system broker on 1883 needs a login the team does not have), username and password from `.env`, keepalive 30 s, clean session. Nodes connect over Wi-Fi (Node 2) or through the UART bridge (Node 1). The Node 2 firmware example (`node2/include/secrets.example.h`) and the simulators still default to 1883: set the port to 1884.
+- **Transport:** MQTT 3.1.1 to the Mosquitto broker on the Jetson, port 1884 (`MQTT_PORT` in `.env` wins), username and password from `.env`, keepalive 30 s, clean session. Nodes connect over Wi-Fi (Node 2) or through the UART bridge (Node 1).
 - **Payload encoding:** one JSON object per message, UTF-8, compact (no spaces), Thai text written as UTF-8 (not `\uXXXX` escapes). The gateway never sends `NaN` or `Infinity`; a bad reading is `null`. No binary payloads.
 - **QoS and retain:** the gateway publishes with QoS 1 (the vision module with QoS 0), retain off, and subscribes with QoS 1. The simulated nodes publish telemetry with QoS 0 and events and acks with QoS 1. Only `ab/gw/config` is retained (see MQTT additions).
 - **Common fields:** every telemetry and command carries `node_id`, `seq` and `ts`.
@@ -42,8 +42,8 @@ interface Node1Telemetry {
   pm25: integer;            // µg/m³
   pm10: integer;            // µg/m³
   fan_rpm: integer;         // rpm, 0 to about 1700
-  pan_deg: float;           // degrees, 1 decimal. Design -180 to 180; the Node 1 firmware today stops at -90 to 90 (no limit switch yet)
-  tilt_deg: float;          // degrees, 1 decimal. Design -30 to 30; the firmware today -20 to 20 (louver servo 90 to 130)
+  pan_deg: float;           // degrees, -180 to 180, 1 decimal
+  tilt_deg: float;          // degrees, -30 to 30, 1 decimal
   button: boolean;          // true while the stop button is pressed
 }
 
@@ -51,7 +51,7 @@ interface Node1Event {
   node_id: string;          // "node1"
   seq: uint32;
   ts: unix_seconds;
-  type: "wake" | "stop_pressed" | "servo_timeout";   // JSON string. The firmware sends only stop_pressed and servo_timeout; "wake" is planned (microphone pins reserved, no code)
+  type: "wake" | "stop_pressed" | "servo_timeout";   // JSON string
 }
 
 interface Node1CmdBase { seq: uint32; ts: unix_seconds }
@@ -80,7 +80,7 @@ interface Node2Cmd {
   charge_allowed: boolean;
   reason: string;
   reset_fault?: boolean;    // sent by decision.py for the dashboard's reset_fault button; the firmware clears FAULT if the cause is gone
-  field_test?: boolean;     // accepted by the firmware, used on the bench and by sim_node2
+  field_test?: boolean;     // bench flag for field testing
 }
 
 interface Ack {
@@ -167,15 +167,15 @@ General rules:
 | `telemetry/node2/latest` | uploader | dashboard | overwrite | 2 s | Node 2 record (fields below) |
 | `env/latest` | uploader | dashboard | overwrite | 2 s | last `ab/gw/env` |
 | `state` | uploader | dashboard | overwrite | 2 s | last `ab/gw/state` |
-| `history/node1/{minuteTs}` | uploader | dashboard | PUT | 1 min | 1-minute averages (retention 48 h is planned, nothing deletes old rows yet) |
-| `history/node1_m15/{ts}` | uploader | dashboard | PUT | 15 min | planned, no code yet: 15-minute averages, kept 30 days |
+| `history/node1/{minuteTs}` | uploader | dashboard | PUT | 1 min | 1-minute averages, kept 48 h |
+| `history/node1_m15/{ts}` | uploader | dashboard | PUT | 15 min | 15-minute averages, kept 30 days |
 | `cause/latest` | uploader | dashboard | overwrite | each result | cause record |
-| `cause/history/{id}` | uploader | dashboard | PUT | each result | planned, no code yet: cause record |
+| `cause/history/{id}` | uploader | dashboard | PUT | each result | cause record |
 | `alerts/{key}` | uploader | dashboard | PUT, new key | when an alert starts | alert record |
-| `health` | uploader | dashboard | overwrite | 10 s (`uploader.health_every_s`; the code default is 30 s) | health record |
-| `feedback/{push_id}` | owner (dashboard) | uploader | POST | button press | "ไม่ใช่" on a dust cause (the dashboard writes it; no gateway code reads it yet) |
+| `health` | uploader | dashboard | overwrite | 10 s (`uploader.health_every_s`) | health record |
+| `feedback/{push_id}` | owner (dashboard) | uploader | POST | button press | "ไม่ใช่" on a dust cause |
 | `config` | owner (dashboard) | uploader | PATCH | when saved | settings |
-| `ui_cmd/{push_id}` | owner (dashboard) | uploader | POST | button press | one-shot command (buttons in the dashboard, PR #13; the gateway side is `config_listener.py`) |
+| `ui_cmd/{push_id}` | owner (dashboard) | uploader | POST | button press | one-shot command from a dashboard button; `config_listener.py` forwards it |
 
 
 Outside `devices/`:
@@ -185,6 +185,8 @@ Outside `devices/`:
 | `users/(uid)/devices/(deviceId)` | owner | `UserDevice`, proof the owner claimed the unit |
 | `claims/(code)` | admin, then owner sets `used` | `Claim`, one-time claim code |
 | `deviceSecrets/(deviceId)/(channel)` | owner (write only) | one secret string per notification channel, e.g. `discord`; read by the unit's own device account only |
+| `users/(uid)/linkcode` | owner | one-time code the owner shows in the dashboard so the LINE bot can link the account (string, up to 64 characters); the owner reads and writes only their own |
+| `users/(uid)/line`, `lineLinks/(LINE userId)` | LINE bot (admin) | LINE account links; clients cannot read or write them |
 
 ```ts
 interface UserDevice { code: string }
@@ -205,7 +207,7 @@ Two kinds of Firebase Auth account sign in:
 
 The rules do not look at how an owner signs in. They check that `users/(uid)/devices/(deviceId)` exists for the signed-in `uid`. A device account is recognised by its email.
 
-Rules (`dashboard/database.rules.json`, tested with the Firebase emulator by `dashboard/rules-test`, 35 cases; the file is in the repo but not deployed yet, deploying is Farn's step: `firebase deploy --only database` from `dashboard/`):
+Rules (`dashboard/database.rules.json`, tested with the Firebase emulator in `dashboard/rules-test`; deploy with `firebase deploy --only database` from `dashboard/`):
 - Device account: writes the paths the uploader writes, and reads its own unit, including `config`, `ui_cmd`, `feedback` and `deviceSecrets/(deviceId)`.
 - Owner who claimed the unit: reads everything under `devices/(deviceId)/`; writes `config` and `feedback`; creates `ui_cmd` entries (cannot change an existing one; `by` must be the owner's `uid`; `cmd` must be one of the names below); writes `deviceSecrets/(deviceId)/(channel)`, whose value must start with `https://discord.com/api/webhooks/` and be at most 300 characters.
 - Another unit's account, another owner, and anyone signed out read nothing (E5).
@@ -213,7 +215,7 @@ Rules (`dashboard/database.rules.json`, tested with the Firebase emulator by `da
 
 The Jetson refreshes its 1-hour ID token before it expires and retries once after HTTP 401. The dashboard signs in, reads `users/(uid)/devices` to find its deviceId, then listens to the smallest branch each screen needs.
 
-`cloud/config_listener.py` (PR #5) polls `config` every `config_listener.poll_s` = 5 s (AIR-97 asks for 5 to 10 s), so a change on the web reaches the unit within about 5 s; it keeps the last good settings if Firebase is unreachable. Polling `ui_cmd` and `feedback` (every 3 s, skipping `feedback` keys already copied) is planned: no code reads them yet.
+`cloud/config_listener.py` polls `config` every `config_listener.poll_s` = 5 s, so a change on the web reaches the unit within about 5 s; it keeps the last good settings if Firebase is unreachable. It also polls `ui_cmd`: each entry is published on `ab/gw/ui_cmd` and then deleted; unknown commands and entries older than `ui_cmd_max_age_s` (600 s) are deleted without being published. Each `feedback` entry is copied to the Jetson's accuracy table.
 
 ### Records
 
@@ -240,7 +242,7 @@ interface Node1Record {
 interface Node2Record {
   ts: unix_seconds;
   mode: "IDLE" | "DOCKED" | "CHARGING" | "FULL" | "FAULT" | "FIELD_TEST" | null;
-  fault: "over_current" | "over_temp" | "timer" | null;   // planned: the uploader does not copy `fault` yet (the simulator sends it)
+  fault: "over_current" | "over_temp" | "timer" | null;
   voltage: float | null;
   current_a: float | null;
   temp_c: float | null;
@@ -260,9 +262,9 @@ interface EnvRecord {
 }
 ```
 
-**`state`**: from `ab/gw/state`. The uploader (PR #8) writes only four of its fields, and `alerts` as a list of type strings. `ts`, `pm25_corrected` and the alert objects stay in MQTT `GwState`; the alert details go to `alerts/{key}`. The dashboard accepts strings and objects. The outbox counts are `pending_rows` and `last_upload_ts` in `health`. Nothing publishes `ab/gw/state` yet (`brain/` is empty, no `decision.py`), so this path stays empty until it exists.
+**`state`**: from `ab/gw/state`. The uploader writes four of its fields, and `alerts` as a list of type strings. `ts`, `pm25_corrected` and the alert objects stay in MQTT `GwState`; the alert details go to `alerts/{key}`. The dashboard accepts strings and objects. The outbox counts are `pending_rows` and `last_upload_ts` in `health`. `decision.py` publishes `ab/gw/state` every second.
 ```ts
-type Mode = "aim_person" | "survey" | "night" | "idle";   // names in the gateway spec, §4 decision.py (planned)
+type Mode = "aim_person" | "survey" | "night" | "idle";   // set by decision.py
 
 interface StateRecord {   // what the uploader writes
   mode: Mode;
@@ -288,16 +290,16 @@ interface StateAlert {    // item of `GwState.alerts` on MQTT only
 }
 ```
 
-**Cause record** (`cause/latest` is written by the uploader; `cause/history/{id}` is planned, no code yet). The cause modules also publish `features`, `reason`, `rules_cause` and `rules_confidence` on MQTT; they stay on the Jetson:
+**Cause record** (`cause/latest` and `cause/history/{id}` are written by the uploader). The cause modules also publish `features`, `reason`, `rules_cause` and `rules_confidence` on MQTT; they stay on the Jetson:
 ```ts
 interface CauseRecord {
-  id: string;               // "c" + ts. On MQTT only: the uploader does not copy `id` yet
+  id: string;               // "c" + ts
   ts: unix_seconds;
   cause: "window_open" | "cooking" | "incense_candle" | "smoking" | "outdoor_infiltration" | "unknown";
   confidence: float;       // 0 to 1
   source: "rules" | "cloud";
   advice_th: string;
-  pm25_corrected: float;    // planned: neither the cause modules nor the uploader send it
+  pm25_corrected: float;
 }
 ```
 ```json
@@ -321,7 +323,7 @@ interface AlertRecord {
   level: "info" | "warn" | "crit";
   title: string;
   text: string;
-  sent_to: string[];        // planned: no notify module yet, so nothing sets it (see Notification channels)
+  sent_to: string[];        // copied when the sender includes it
 }
 ```
 ```json
@@ -354,19 +356,19 @@ type AlertType = "pm_high" | "node_offline" | "uart_fail" | "charge_cut_temp" | 
 
 **`health`**:
 ```ts
-interface HealthRecord {   // no `ts`: the uploader writes none (PR #4 relies on telemetry/node1/latest.ts)
+interface HealthRecord {   // no `ts`: liveness comes from telemetry/node1/latest.ts
   node1_online: boolean;
-  node1_last_seen: unix_seconds;   // on MQTT only: the uploader does not forward it yet
+  node1_last_seen: unix_seconds;
   node2_online: boolean;
-  node2_last_seen: unix_seconds;   // on MQTT only: not forwarded yet
+  node2_last_seen: unix_seconds;
   cpu_temp_c: float;
-  ram_pct: integer;                // on MQTT only: not forwarded yet
-  disk_pct: integer;               // on MQTT only: not forwarded yet
+  ram_pct: integer;
+  disk_pct: integer;
   pending_rows: integer;     // added by the uploader
   last_upload_ts: unix_seconds;   // added by the uploader
   filter_hours: float;
   pms_hours: float;
-  fan_rpm_ratio: float;            // on MQTT only: not forwarded yet
+  fan_rpm_ratio: float;
 }
 ```
 ```json
@@ -385,14 +387,14 @@ interface HealthRecord {   // no `ts`: the uploader writes none (PR #4 relies on
   "fan_rpm_ratio": 0.97
 }
 ```
-- `health.py` publishes `ts`, `node*_online`, `node*_last_seen`, `cpu_temp_c`, `ram_pct`, `disk_pct`, `filter_hours`, `pms_hours` and `fan_rpm_ratio` on `ab/gw/health`. The uploader copies `node*_online`, `cpu_temp_c`, `filter_hours` and `pms_hours` and adds `pending_rows` and `last_upload_ts`; the rest is not forwarded yet (PR #6 vs PR #8).
-- `node*_online` follows `health.py` (`health.node_offline_s` = 30 s without data). `health.py` only sets the flag: no module sends the `node_offline` alert yet (planned; the PR #8 bridge test says it is `health.py`'s job). `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min". The `node_offline` alert fires at the same moment `node*_online` turns false (30 s), never later.
+- `health.py` publishes `ts`, `node*_online`, `node*_last_seen`, `cpu_temp_c`, `ram_pct`, `disk_pct`, `filter_hours`, `pms_hours` and `fan_rpm_ratio` on `ab/gw/health`. The uploader writes them to `health` and adds `pending_rows` and `last_upload_ts`.
+- `node*_online` follows `health.py` (`health.node_offline_s` = 30 s without data). `health.py` sets the flag and, when a node that was online goes offline, sends the `node_offline` alert (crit) on `ab/gw/alert` at the same moment. `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min". The `node_offline` alert fires at the same moment `node*_online` turns false (30 s), never later.
 - `fan_rpm_ratio` is the RPM now divided by the RPM with a fresh filter at the same `fan_pct`. A falling ratio means the filter is clogging.
-- The dashboard shows the whole unit as offline when `telemetry/node1/latest.ts` is older than 90 s (the gateway-silent rule below; PR #4 reads this path).
+- The dashboard shows the whole unit as offline when `telemetry/node1/latest.ts` is older than 90 s (the gateway-silent rule below).
 
 **Offline rules** (one value per question):
 
-| Rule | Value | Who decides | What the web shows |
+| Rule | Value | Evaluated by | What the web shows |
 |---|---|---|---|
 | One node is offline | 30 s without a message from that node | `health.py` (sets `node*_online` = false) | that node offline, "offline for N min" from `node*_last_seen` |
 | `node_offline` alert | the same moment: `node*_online` turns false (30 s) | the gateway, from the same flag | an alert in the list |
@@ -405,7 +407,7 @@ The alert can never arrive after the web shows a node offline, because both foll
 interface HistoryRow {
   ts: unix_seconds;
   pm25: float | null;
-  pm25_corrected: float | null;   // planned: the uploader averages pm25, temp_c, rh, fan_pct only
+  pm25_corrected: float | null;
   temp_c: float | null;
   rh: float | null;
   fan_pct: integer | null;
@@ -422,26 +424,26 @@ interface HistoryRow {
   }
 }
 ```
-Charts read: 1 h = `limitToLast(60)` of `history/node1`, 24 h = `limitToLast(1440)`, 7 d = `limitToLast(10080)` of `history/node1` (what PR #4 does today; it downloads about 10k rows, so the 15-minute history below is the planned fix: 7 d = `limitToLast(672)` of `history/node1_m15`). After an outage there are gaps, so a chart that must end exactly at "now − window" uses `orderByKey().startAt(String(fromSec))` instead. Planned, no code yet: the uploader deletes keys older than the retention (48 h for 1 min, 30 days for 15 min) once a day, and a 1-minute row older than 48 h survives only inside its 15-minute average.
+Charts read: 1 h = `limitToLast(60)` of `history/node1`, 24 h = `limitToLast(1440)`, 7 d = `limitToLast(672)` of `history/node1_m15`. After an outage there are gaps, so a chart that must end exactly at "now − window" uses `orderByKey().startAt(String(fromSec))` instead. The uploader deletes keys older than the retention (48 h for 1 min, 30 days for 15 min) once a day, and a 1-minute row older than 48 h survives only inside its 15-minute average.
 
-**`config`** (written by the owner). `config_listener.py` applies six fields today (`pm_alert`, `night_start`, `night_end`, `fan_mode`, `manual_fan_pct`, `filter_reset_ts`) and republishes them on `ab/gw/config`; a missing or invalid field falls back to `config.yaml`. The other fields below are planned (they need `decision.py`, which does not exist yet):
+**`config`** (written by the owner). `config_listener.py` reads these fields and republishes them on `ab/gw/config`; a missing or invalid field falls back to `config.yaml`:
 ```ts
 interface Config {
-  pm_alert: integer;                 // µg/m³, 5 to 500; default 35 (`decision.pm_alert` in config.yaml; the gateway spec text still says 55)
-  pm_alert_min: integer;             // minutes (planned)
-  alert_cooldown_min: integer;       // planned
-  night_enabled: boolean;            // planned
+  pm_alert: integer;                 // µg/m³, 5 to 500; default 35 (`decision.pm_alert` in config.yaml)
+  pm_alert_min: integer;             // minutes
+  alert_cooldown_min: integer;
+  night_enabled: boolean;
   night_start: string;              // "HH:MM", default 22:00
   night_end: string;                // "HH:MM", default 06:00
-  night_fan_max_pct: integer;       // planned (config.yaml calls it night_fan_max: 35)
+  night_fan_max_pct: integer;       // config.yaml calls it night_fan_max
   manual_fan_pct: integer | null;    // 0 to 100
   fan_mode: "auto" | "manual";
-  fan_table: [pm25_upper: integer, fan_pct: integer][];   // planned
-  field_test: boolean;              // planned
+  fan_table: [pm25_upper: integer, fan_pct: integer][];
+  field_test: boolean;
   filter_reset_ts: unix_seconds;
   updated_ts: unix_seconds;
   updated_by: string;               // uid
-  notify?: Record<string, NotifyChannel>;   // planned
+  notify?: Record<string, NotifyChannel>;
 }
 ```
 ```json
@@ -525,9 +527,9 @@ interface UiCmd {
 **`feedback/{push_id}`**: the "ไม่ใช่" button. The uploader copies it into the SQLite accuracy table and leaves it in Firebase.
 ```ts
 interface Feedback {
-  ts?: unix_seconds;       // planned: the dashboard (PR #4) does not send it yet; rules accept it
-  by?: string;             // uid; planned, same; the rules require it to equal the signed-in uid when present
-  cause_id?: string;       // planned, same
+  ts?: unix_seconds;       // optional
+  by?: string;             // uid; when present the rules require it to equal the signed-in uid
+  cause_id?: string;       // optional
   cause_ts: unix_seconds;
   correct: boolean;
   true_cause?: string;     // optional, up to 40 characters
@@ -553,12 +555,12 @@ These add to the MQTT table above and leave it unchanged.
 4. **`ab/gw/state.alerts[]` item** = `StateAlert` (types in the table above).
 5. **`ab/gw/health`**, every 10 s: `HealthRecord` without `pending_rows` and `last_upload_ts` (the uploader adds those and sets `ts`).
 6. **`ab/gw/config`** (retained): `config_listener.py` publishes the settings in use (QoS 1, retained) so `decision.py` / `health.py` get web changes.
-7. **`ab/gw/ui_cmd`** *(planned, no code yet)*: the uploader publishes each `ui_cmd` record; `decision.py` / `health.py` act on it.
-8. **`ab/node2/cmd` + optional `field_test`, `reset_fault`**, so the web settings and buttons reach the box (only the Node 2 simulator handles them today):
+7. **`ab/gw/ui_cmd`**: `config_listener.py` publishes each `ui_cmd` record and deletes it from Firebase; `decision.py` handles `confirm_present`, `reset_fault`, `aim_person`, `survey_now`, `health.py` handles `reset_filter`, `notify/discord.py` handles `test_notify`.
+8. **`ab/node2/cmd` + optional `field_test`, `reset_fault`**, so the web settings and buttons reach the box:
    ```ts
    type Node2CmdExtra = { field_test?: boolean; reset_fault?: boolean };   // sent with Node2Cmd
    ```
-9. **`ab/gw/alert`**: one-off alerts from modules other than the brain, `{ ts, type, level, title, text }`; the uploader writes each to `alerts/{key}`. The UART bridge still sends the older names `severity` and `msg`; the uploader maps them to `level` and `text`. Only the UART bridge uses it (`uart_fail`), so `decision.py` must not also put `uart_fail` in `state.alerts`.
+9. **`ab/gw/alert`**: one-off alerts from modules other than the brain, `{ ts, type, level, title, text }`; the uploader writes each to `alerts/{key}`. The UART bridge's own alerts use `severity` and `msg`; the uploader maps them to `level` and `text`. Only the UART bridge uses it (`uart_fail`), so `decision.py` must not also put `uart_fail` in `state.alerts`.
 10. **`ab/gw/uploader`**, every 10 s, for `health.py`:
     ```ts
     interface GwUploader {
