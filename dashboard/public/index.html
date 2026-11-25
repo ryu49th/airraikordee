@@ -93,6 +93,10 @@
             <div><dt>ทิศหัวเครื่อง</dt><dd id="aim">–</dd></div>
             <div><dt>แบตเตอรี่</dt><dd id="battery-mini">–</dd></div>
           </dl>
+          <div class="row">
+            <button type="button" data-cmd="aim_person" data-status="aim-status">หันมาหาฉัน</button>
+            <span id="aim-status" class="small muted"></span>
+          </div>
         </article>
 
         <article class="card" id="cause-card">
@@ -111,6 +115,10 @@
             <button type="submit" class="primary">ส่ง</button>
           </form>
           <p id="cause-thanks" class="ok small" hidden>ขอบคุณ ส่งความเห็นแล้ว</p>
+          <div class="row">
+            <button type="button" data-cmd="survey_now" data-status="survey-status">หาสาเหตุตอนนี้</button>
+            <span id="survey-status" class="small muted"></span>
+          </div>
         </article>
 
         <article class="card wide">
@@ -156,8 +164,15 @@
           <div><dt>อุณหภูมิในกล่อง</dt><dd id="box-temp">–</dd></div>
         </dl>
         <p id="box-fault" class="error" hidden></p>
+        <div class="row">
+          <button type="button" class="primary" data-cmd="confirm_present" data-status="present-status">ฉันอยู่ในห้อง ชาร์จได้</button>
+          <button type="button" id="btn-reset-fault" data-cmd="reset_fault" data-status="present-status"
+                  data-confirm="แก้สาเหตุแล้ว (สายไม่ร้อน ไม่มีกลิ่นไหม้) และต้องการรีเซ็ตกล่องชาร์จ?" hidden>รีเซ็ตกล่องชาร์จ</button>
+          <span id="present-status" class="small muted"></span>
+        </div>
         <p class="muted small" id="box-updated"></p>
-        <p class="muted small">ชาร์จได้เฉพาะเมื่อมีคนอยู่ในห้องภายใน 15 นาที และแบตไม่ร้อนเกิน 45 °C (กติกาความปลอดภัย)</p>
+        <p class="muted small">ชาร์จได้เฉพาะเมื่อมีคนอยู่ในห้องภายใน 15 นาที และแบตไม่ร้อนเกิน 45 °C (กติกาความปลอดภัย)
+          ถ้ากล้องมองไม่เห็นคุณ กด "ฉันอยู่ในห้อง" แล้วเครื่องจะนับว่ามีคนเฝ้าไปอีก 15 นาที</p>
       </article>
     </section>
 
@@ -224,6 +239,13 @@
         <p class="muted">กดหลังเปลี่ยนไส้กรองใหม่ เครื่องจะเริ่มนับชั่วโมงใหม่</p>
         <button type="button" id="filter-reset">เปลี่ยนไส้กรองแล้ว</button>
         <span id="filter-status" class="small"></span>
+      </article>
+
+      <article class="card">
+        <h2>แจ้งเตือนทาง Discord</h2>
+        <p class="muted">เครื่องส่งแจ้งเตือนเข้าห้อง Discord ที่ตั้ง webhook ไว้บน Jetson (เรื่องเดิมไม่เกิน 1 ครั้งต่อ 15 นาที)</p>
+        <button type="button" data-cmd="test_notify" data-status="notify-status">ส่งข้อความทดสอบ</button>
+        <span id="notify-status" class="small"></span>
       </article>
 
       <article class="card">

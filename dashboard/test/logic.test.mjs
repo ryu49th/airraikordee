@@ -72,3 +72,10 @@ test("feedback has only the contract fields", () => {
   assert.deepEqual(L.feedbackRecord({ ts: 5 }, false, "cooking"), { cause_ts: 5, correct: false, true_cause: "cooking" });
   assert.deepEqual(L.feedbackRecord({ ts: 5 }, true, "cooking"), { cause_ts: 5, correct: true });
 });
+
+test("ui_cmd records match the contract", () => {
+  assert.deepEqual(L.uiCmdRecord("confirm_present", "u1", 1794383760),
+    { ts: 1794383760, by: "u1", cmd: "confirm_present" });
+  assert.deepEqual(L.uiCmdRecord("test_notify", "u1", 5), { ts: 5, by: "u1", cmd: "test_notify", channel: "discord" });
+  assert.throws(() => L.uiCmdRecord("format_disk", "u1", 5));
+});

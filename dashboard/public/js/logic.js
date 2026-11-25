@@ -206,3 +206,15 @@ export function feedbackRecord(cause, correct, trueCause) {
   if (!correct && trueCause) rec.true_cause = trueCause;
   return rec;
 }
+
+// Buttons that ask the unit to do something now (docs/protocol.md -> ui_cmd). The Jetson deletes the entry when
+// it has handled it, so "gone" means "received".
+export const UI_CMDS = ["confirm_present", "reset_fault", "reset_filter", "aim_person", "survey_now", "test_notify"];
+export const UI_CMD_TIMEOUT_S = 20;
+
+export function uiCmdRecord(cmd, uid, nowS, channel) {
+  if (!UI_CMDS.includes(cmd)) throw new Error("unknown command " + cmd);
+  const rec = { ts: nowS, by: uid, cmd };
+  if (cmd === "test_notify") rec.channel = channel || "discord";
+  return rec;
+}

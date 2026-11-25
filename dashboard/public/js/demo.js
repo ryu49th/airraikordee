@@ -170,6 +170,16 @@ export function startDemo(store, deviceId) {
     minuteAcc.push({ pm25: pm, temp_c: temp, rh, fan_pct: fan });
   }
 
+  // the fake Jetson handles dashboard buttons: it deletes each ui_cmd entry after a moment (= "received")
+  const taken = new Set();
+  store.listen(base + "ui_cmd", (cmds) => {
+    for (const key of Object.keys(cmds || {})) {
+      if (taken.has(key)) continue;
+      taken.add(key);
+      setTimeout(() => store._write(base + "ui_cmd/" + key, null), 1500);
+    }
+  });
+
   tick();
   return setInterval(tick, 1000);
 }

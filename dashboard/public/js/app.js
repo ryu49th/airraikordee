@@ -279,8 +279,9 @@ function renderCharge() {
   fault.hidden = !(n2 && n2.mode === "FAULT");
   if (!fault.hidden) {
     const why = { over_current: "กระแสเกิน", over_temp: "ร้อนเกิน", timer: "ชาร์จนานเกิน 4 ชั่วโมง" }[n2.fault];
-    fault.textContent = "หยุดชาร์จ" + (why ? "เพราะ" + why : "") + " ต้องแก้สาเหตุแล้วกดรีเซ็ตที่กล่อง";
+    fault.textContent = "หยุดชาร์จ" + (why ? "เพราะ" + why : "") + " แก้สาเหตุก่อน แล้วกดรีเซ็ตกล่องชาร์จ";
   }
+  $("btn-reset-fault").hidden = fault.hidden;
   refreshAges();
 }
 
@@ -585,6 +586,10 @@ function wireStatic() {
     busy(btn, false);
   });
 
+  document.querySelectorAll("button[data-cmd]").forEach((btn) => {
+    btn.addEventListener("click", () => sendCmd(btn));
+  });
+
   $("filter-reset").addEventListener("click", async () => {
     if (!confirm("ยืนยันว่าเปลี่ยนไส้กรองใหม่แล้ว?")) return;
     try {
@@ -594,6 +599,42 @@ function wireStatic() {
       setText("filter-status", "บันทึกไม่สำเร็จ: " + errorText(err));
     }
   });
+}
+
+// Write devices/(id)/ui_cmd/(push id); the Jetson deletes it when handled, so "gone" = received.
+async function sendCmd(btn) {
+  const cmd = btn.dataset.cmd;
+  const status = btn.dataset.status;
+  if (btn.dataset.confirm && !confirm(btn.dataset.confirm)) return;
+  const path = "devices/" + ui.deviceId + "/ui_cmd";
+  busy(btn, true);
+  setText(status, "กำลังส่ง…");
+  let ref;
+  try {
+    ref = await ui.store.push(path, L.uiCmdRecord(cmd, ui.user.uid, nowS()));
+  } catch (err) {
+    setText(status, "ส่งไม่สำเร็จ: " + errorText(err));
+    busy(btn, false);
+    return;
+  }
+  setText(status, "ส่งแล้ว รอเครื่องรับ…");
+  let seen = false;
+  let finished = false;
+  let off = null;
+  const finish = (text) => {
+    if (finished) return;
+    finished = true;
+    setText(status, text);
+    busy(btn, false);
+    if (off) off();
+  };
+  const timer = setTimeout(() => finish("เครื่องยังไม่รับคำสั่ง (ออฟไลน์อยู่หรือเปล่า?) คำสั่งจะค้างไว้ 10 นาที"),
+    L.UI_CMD_TIMEOUT_S * 1000);
+  off = ui.store.listen(path + "/" + ref.key, (v) => {
+    if (v !== null) { seen = true; return; }
+    if (seen) { clearTimeout(timer); finish("เครื่องรับคำสั่งแล้ว"); }
+  }, (err) => { clearTimeout(timer); finish("ติดตามสถานะไม่ได้: " + errorText(err)); });
+  if (finished && off) off();
 }
 
 function segOn(groupId, btn) {
