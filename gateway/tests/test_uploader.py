@@ -295,3 +295,40 @@ def test_wrong_device_password_is_reported_not_raised():
     fb = FirebaseRest("https://db.example", "x", auth, session)
     assert fb.patch({"env/latest": {}}) == (None, "device sign-in failed")
     assert not [c for c in session.calls if c[0] == "PATCH"]
+
+
+class RulesFirebase(object):
+    """Denies writes to some paths (like the real rules on an existing alert key); reads work unless told."""
+
+    def __init__(self, denied, can_read=True):
+        self.denied = set(denied)
+        self.can_read = can_read
+        self.stored = {}
+
+    def patch(self, updates):
+        if any(p in self.denied for p in updates):
+            return 401, '{\n  "error" : "Permission denied"\n}\n'
+        self.stored.update(updates)
+        return 200, "{}"
+
+    def get(self, path):
+        return (200, {}) if self.can_read else (401, "Permission denied")
+
+
+def test_rows_the_rules_refuse_are_parked_and_the_rest_goes_up(outbox):
+    for i in range(6):
+        outbox.add("alerts/%d" % i, 1.0 + i, '{"ts":%d,"level":"warn","title":"x","text":"y"}' % i)
+    outbox.add("health", 9.0, '{"cpu_temp_c":50}')
+    fb = RulesFirebase(denied={"alerts/2", "alerts/4"})
+    up, _ = make(outbox, fb)
+    drain(up)
+    assert outbox.pending() == 0 and up.stats["dead"] == 2
+    assert "health" in fb.stored and "alerts/5" in fb.stored and "alerts/2" not in fb.stored
+
+
+def test_wrong_account_keeps_the_rows_instead_of_dropping_them(outbox):
+    outbox.add("health", 1.0, '{"cpu_temp_c":50}')
+    fb = RulesFirebase(denied={"health"}, can_read=False)
+    up, _ = make(outbox, fb)
+    delay = up.step()
+    assert delay > 0 and outbox.pending() == 1 and up.stats["dead"] == 0

@@ -517,6 +517,22 @@ class Uploader(object):
             self._batch_cap = self.batch_size
             return 0
 
+        if status in (401, 403) and "denied" in str(body).lower():
+            # FirebaseRest already refreshed the token once, so this is the rules refusing some of the content
+            # (for example an alert key that already exists). Find the refused rows and park them, so they
+            # never block the rest of the queue. If the account cannot even read its own device, the rules
+            # or the account are wrong for everything: keep the rows and wait instead.
+            if len(rows) > 1:
+                self._batch_cap = max(1, len(rows) // 2)
+                log.warning("firebase denied a batch of %d rows, retrying in smaller batches", len(rows))
+                return 0
+            if self.firebase.get("health")[0] == 200:
+                log.error("firebase rules refused row %d (%s), moved to dead table", rows[0][0], rows[0][1])
+                self.outbox.move_to_dead(rows[0], "%s %s" % (status, body))
+                self.stats["dead"] += 1
+                self._batch_cap = self.batch_size
+                return 0
+
         delay = self._backoff
         self._backoff = min(self.backoff_max, self._backoff * 2)
         if status in (401, 403):
