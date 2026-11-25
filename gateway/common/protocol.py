@@ -25,6 +25,7 @@ TOPIC_GW_ALERT = "ab/gw/alert"
 TOPIC_GW_UPLOADER = "ab/gw/uploader"
 # Settings from the dashboard (devices/<id>/config), retained so a module that starts later gets them.
 TOPIC_GW_CONFIG = "ab/gw/config"
+TOPIC_GW_UI_CMD = "ab/gw/ui_cmd"       # dashboard buttons, copied from Firebase ui_cmd by config_listener
 
 UINT32 = 2 ** 32
 

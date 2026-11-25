@@ -21,7 +21,7 @@ import queue
 import threading
 import time
 
-from common.protocol import TOPIC_GW_ALERT, TOPIC_GW_STATE, now_ts
+from common.protocol import TOPIC_GW_ALERT, TOPIC_GW_STATE, TOPIC_GW_UI_CMD, now_ts
 
 log = logging.getLogger("discord")
 
@@ -131,6 +131,7 @@ class DiscordNotifier(object):
         self.mqtt.subscribe(TOPIC_GW_ALERT, self.on_alert)
         self.mqtt.subscribe(TOPIC_GW_STATE, self.on_state)
         self.mqtt.subscribe(TOPIC_VISION_SURVEY, self.on_survey)
+        self.mqtt.subscribe(TOPIC_GW_UI_CMD, self.on_ui_cmd)
         self._thread = threading.Thread(target=self._loop, name="discord", daemon=True)
         self._thread.start()
 
@@ -161,6 +162,12 @@ class DiscordNotifier(object):
                              "level": alert.get("level") or "warn", "title": alert.get("title"),
                              "text": alert.get("text") or ""})
         self._state_active = active
+
+    def on_ui_cmd(self, topic, msg):
+        """"Send test" button on the dashboard: one message now, ignoring the cooldown."""
+        if msg.get("cmd") == "test_notify" and msg.get("channel", "discord") == "discord":
+            self.submit({"ts": msg.get("ts") or now_ts(), "type": "test", "level": "info",
+                         "title": "ทดสอบการแจ้งเตือน", "text": "ส่งจากปุ่มทดสอบบนแดชบอร์ด"}, force=True)
 
     def on_survey(self, topic, msg):
         paths = [p if isinstance(p, str) else (p or {}).get("path") for p in msg.get("snapshots") or []]

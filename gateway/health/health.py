@@ -23,8 +23,8 @@ import shutil
 import threading
 import time
 
-from common.protocol import (TOPIC_GW_ALERT, TOPIC_GW_CONFIG, TOPIC_GW_HEALTH, TOPIC_GW_STATE, TOPIC_NODE1_EVENT,
-                             TOPIC_NODE1_TELEMETRY, TOPIC_NODE2_TELEMETRY, now_ts)
+from common.protocol import (TOPIC_GW_ALERT, TOPIC_GW_CONFIG, TOPIC_GW_HEALTH, TOPIC_GW_STATE, TOPIC_GW_UI_CMD,
+                             TOPIC_NODE1_EVENT, TOPIC_NODE1_TELEMETRY, TOPIC_NODE2_TELEMETRY, now_ts)
 
 log = logging.getLogger("health")
 
@@ -135,6 +135,7 @@ class Health(object):
         self.mqtt.subscribe(TOPIC_NODE2_TELEMETRY, self.on_node2)
         self.mqtt.subscribe(TOPIC_GW_STATE, self.on_state)
         self.mqtt.subscribe(TOPIC_GW_CONFIG, self.on_config)
+        self.mqtt.subscribe(TOPIC_GW_UI_CMD, self.on_ui_cmd)
         self._thread = threading.Thread(target=self._loop, name="health", daemon=True)
         self._thread.start()
 
@@ -173,6 +174,16 @@ class Health(object):
         with self._lock:
             if _num(msg.get("fan_pct")):
                 self._fan_pct = float(msg["fan_pct"])
+
+    def on_ui_cmd(self, topic, msg):
+        if msg.get("cmd") != "reset_filter":
+            return
+        with self._lock:
+            log.info("new filter (button): filter_hours %.1f -> 0, RPM baseline cleared", self.filter_hours)
+            self.filter_hours = 0.0
+            self.baseline = {}
+            self.fan_rpm_ratio = None
+            self._last_save = None
 
     def on_config(self, topic, msg):
         ts = msg.get("filter_reset_ts")

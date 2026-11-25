@@ -2,7 +2,7 @@ import json
 
 from cloud.config_listener import ConfigListener, validate
 from cloud.uploader import FirebaseRest
-from common.protocol import TOPIC_GW_CONFIG, TOPIC_NODE1_CMD
+from common.protocol import TOPIC_GW_CONFIG, TOPIC_GW_UI_CMD, TOPIC_NODE1_CMD
 from conftest import FakeMqtt
 
 CFG = {"decision": {"pm_alert": 35, "night_start": "22:00", "night_end": "06:00"},
@@ -16,14 +16,24 @@ class FakeFirebase(object):
 
     def __init__(self, value=None):
         self.value = value
+        self.ui_cmd = None
         self.status = None
+        self.patch_status = 200
         self.paths = []
+        self.patches = []
 
     def get(self, path):
         self.paths.append(path)
         if self.status is not None:
             return self.status, "error"
-        return 200, self.value
+        return 200, (self.ui_cmd if path == "ui_cmd" else self.value)
+
+    def patch(self, updates):
+        self.patches.append(updates)
+        if self.patch_status == 200 and self.ui_cmd:
+            for k in updates:
+                self.ui_cmd.pop(k.split("/", 1)[1], None)
+        return self.patch_status, "{}"
 
 
 class Clock(object):
@@ -63,7 +73,7 @@ def test_manual_without_a_value_means_auto():
 def test_never_saved_config_uses_defaults_and_publishes_once():
     listener, fb, _ = make(None)
     assert listener.step() == 5
-    assert fb.paths == ["config"]
+    assert fb.paths == ["config", "ui_cmd"]
     listener.step()
     msgs = listener.mqtt.on(TOPIC_GW_CONFIG)
     assert len(msgs) == 1
@@ -198,3 +208,24 @@ def test_sim_node1_follows_the_manual_fan_setting():
     node.apply_cmd(listener.mqtt.on(TOPIC_NODE1_CMD)[-1])
     node.step(10)
     assert node.fan_pct == 20 and node.fan_rpm < 0.3 * FAN_MAX_RPM
+
+
+def test_ui_cmd_is_published_once_then_deleted():
+    import time as _time
+    listener, fb, _ = make({"pm_alert": 35})
+    now = int(_time.time())
+    fb.ui_cmd = {"k1": {"ts": now, "by": "uid1", "cmd": "confirm_present"},
+                 "k2": {"ts": now, "by": "uid1", "cmd": "test_notify", "channel": "discord"},
+                 "k3": {"ts": now, "by": "uid1", "cmd": "format_disk"},
+                 "k4": {"ts": now - 3600, "by": "uid1", "cmd": "aim_person"}}
+    fb.patch_status = 500                       # delete fails: next poll must not publish them again
+    listener.step()
+    listener.step()
+    msgs = listener.mqtt.on(TOPIC_GW_UI_CMD)
+    assert [m["cmd"] for m in msgs] == ["confirm_present", "test_notify"]
+    assert msgs[1]["channel"] == "discord" and msgs[0]["source"] == "app" and "by" not in msgs[0]
+    fb.patch_status = 200
+    listener.step()
+    assert fb.ui_cmd == {} and len(listener.mqtt.on(TOPIC_GW_UI_CMD)) == 2
+    assert set(fb.patches[-1]) == {"ui_cmd/k1", "ui_cmd/k2", "ui_cmd/k3", "ui_cmd/k4"}
+    assert all(v is None for v in fb.patches[-1].values())

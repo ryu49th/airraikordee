@@ -6,6 +6,10 @@ uploader), checks each field, and:
 - while fan_mode is "manual", sends ab/node1/cmd {"cmd": "fan", "pct": manual_fan_pct} when the value changes
   and again every manual_resend_s (Node 1 forgets it after a reset).
 
+It also copies the dashboard buttons: every entry in devices/<deviceId>/ui_cmd ({ts, by, cmd, channel?}) is
+published on ab/gw/ui_cmd and then deleted from Firebase (the dashboard shows "received" when it is gone).
+Unknown commands and entries older than ui_cmd_max_age_s are deleted without being published.
+
 Fields (Farn's data contract): pm_alert, night_start, night_end, manual_fan_pct, fan_mode, filter_reset_ts.
 A missing or invalid field falls back to config.yaml. If Firebase cannot be reached the last good settings stay
 in use (and survive a restart through a small cache file), so the unit never stops because the internet is down.
@@ -19,12 +23,13 @@ import re
 import threading
 import time
 
-from common.protocol import TOPIC_GW_CONFIG, TOPIC_NODE1_CMD, SeqCounter, now_ts
+from common.protocol import TOPIC_GW_CONFIG, TOPIC_GW_UI_CMD, TOPIC_NODE1_CMD, SeqCounter, now_ts
 
 log = logging.getLogger("config_listener")
 
 HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 FIELDS = ("pm_alert", "night_start", "night_end", "fan_mode", "manual_fan_pct", "filter_reset_ts")
+UI_CMDS = ("confirm_present", "reset_fault", "reset_filter", "aim_person", "survey_now", "test_notify")
 
 
 def defaults_from(cfg):
@@ -77,6 +82,8 @@ class ConfigListener(object):
         self.poll_s = float(c.get("poll_s", 5))
         self.manual_resend_s = float(c.get("manual_resend_s", 60))
         self.backoff_max_s = float(c.get("backoff_max_s", 60))
+        self.ui_cmd_max_age_s = float(c.get("ui_cmd_max_age_s", 600))
+        self._ui_handled = set()   # keys already published, in case the delete failed
         self.defaults = defaults_from(cfg)
         self.mqtt = mqtt
         self.firebase = firebase
@@ -93,7 +100,7 @@ class ConfigListener(object):
         self._stop = threading.Event()
         self._thread = None
         self.stats = {"polls": 0, "poll_errors": 0, "changes": 0, "fan_cmds": 0, "last_ok_ts": None,
-                      "last_error": None}
+                      "last_error": None, "ui_cmds": 0}
 
     # --- lifecycle ---------------------------------------------------------------------------------
 
@@ -124,6 +131,7 @@ class ConfigListener(object):
             self._fails = 0
             self.stats["last_ok_ts"] = now_ts()
             self.apply(body, "firebase")
+            self.poll_ui_cmd()
             return self.poll_s
 
         self._fails += 1
@@ -160,6 +168,39 @@ class ConfigListener(object):
                 log.info("filter replaced (filter_reset_ts=%s)", settings["filter_reset_ts"])
             self._publish_config()
         self._keep_fan()
+
+    def poll_ui_cmd(self):
+        """Publish each dashboard button press on ab/gw/ui_cmd, then delete it from Firebase."""
+        status, body = self.firebase.get("ui_cmd")
+        if status != 200 or not isinstance(body, dict) or not body:
+            return []
+        done = []
+        now = time.time()
+        for key in sorted(body):
+            if key in self._ui_handled:
+                continue  # published before; only the delete failed
+            self._ui_handled.add(key)
+            entry = body[key]
+            cmd = entry.get("cmd") if isinstance(entry, dict) else None
+            ts = entry.get("ts") if isinstance(entry, dict) else None
+            if cmd not in UI_CMDS:
+                log.warning("ui_cmd %s: unknown command %r, deleted", key, cmd)
+            elif isinstance(ts, (int, float)) and now - ts > self.ui_cmd_max_age_s:
+                log.info("ui_cmd %s: %s from %.0f s ago is too old, deleted", key, cmd, now - ts)
+            else:
+                msg = {"ts": ts if isinstance(ts, (int, float)) else int(now), "cmd": cmd, "source": "app"}
+                if isinstance(entry.get("channel"), str):
+                    msg["channel"] = entry["channel"]
+                self.mqtt.publish(TOPIC_GW_UI_CMD, msg)
+                self.stats["ui_cmds"] += 1
+                log.info("ui_cmd %s from the dashboard", cmd)
+                done.append(cmd)
+        status, text = self.firebase.patch(dict(("ui_cmd/%s" % k, None) for k in body))
+        if status == 200:
+            self._ui_handled -= set(body)
+        else:
+            log.warning("could not delete handled ui_cmd entries: %s %s", status, text)
+        return done
 
     def _publish_config(self):
         msg = dict(self.current)

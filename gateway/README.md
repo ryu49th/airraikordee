@@ -151,6 +151,20 @@ Polls `devices/<DEVICE_ID>/config` every 5 s with the same device account and `.
 Try it without hardware: run `tools.sim_node1` and the listener, set the fan to manual on the dashboard, and the
 sim's `fan_pct` follows within ~5 s.
 
+## Dashboard buttons (ui_cmd)
+config_listener also reads `devices/<DEVICE_ID>/ui_cmd` on every poll (5 s), publishes each entry on
+`ab/gw/ui_cmd {ts, cmd, source: "app", channel?}` and deletes it from Firebase (the web shows "received" when it is
+gone). Unknown commands and entries older than 10 min are deleted without effect.
+
+| `cmd` | Handled by | Effect |
+|---|---|---|
+| `confirm_present` | decision.py | counts as "person seen" for the 15-min charge rule (does not aim the head) |
+| `reset_fault` | decision.py | `ab/node2/cmd {reset_fault: true}`; Node 2 clears FAULT if the cause is gone |
+| `reset_filter` | health.py | `filter_hours` = 0, new RPM baseline |
+| `aim_person` | decision.py | turns straight to the nearest person the camera sees |
+| `survey_now` | decision.py | `ab/gw/vision/cmd {cmd: survey}` |
+| `test_notify` | notify/discord.py | one test message now, ignoring the cooldown |
+
 ## Health (health.py)
 - A node is **offline after 30 s** without any message; `ab/gw/health` goes out every 10 s and at once on a change,
   so the uploader and the dashboard see it within ~30 s (the uploader writes `health` to Firebase every

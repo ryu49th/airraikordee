@@ -39,13 +39,14 @@ import logging
 import threading
 import time
 
-from common.protocol import (TOPIC_GW_CONFIG, TOPIC_GW_ENV, TOPIC_GW_HEALTH, TOPIC_GW_STATE, TOPIC_GW_VISION,
-                             TOPIC_NODE1_CMD, TOPIC_NODE1_EVENT, TOPIC_NODE1_TELEMETRY, TOPIC_NODE2_CMD,
-                             TOPIC_NODE2_TELEMETRY, SeqCounter, now_ts)
+from common.protocol import (TOPIC_GW_CONFIG, TOPIC_GW_ENV, TOPIC_GW_HEALTH, TOPIC_GW_STATE, TOPIC_GW_UI_CMD,
+                             TOPIC_GW_VISION, TOPIC_NODE1_CMD, TOPIC_NODE1_EVENT, TOPIC_NODE1_TELEMETRY,
+                             TOPIC_NODE2_CMD, TOPIC_NODE2_TELEMETRY, SeqCounter, now_ts)
 
 log = logging.getLogger("decision")
 
-TOPIC_GW_UI_CMD = "ab/gw/ui_cmd"
+TOPIC_VISION_CMD = "ab/gw/vision/cmd"
+TOPIC_CAUSE_REQUEST = "ab/gw/cause/request"
 
 DEFAULTS = {
     "pm_alert": 35,
@@ -208,10 +209,41 @@ class Brain(object):
             self.settings = dict((k, msg[k]) for k in keep if k in msg)
 
     def on_ui_cmd(self, topic, msg):
-        if msg.get("cmd") == "confirm_present":
+        """Dashboard buttons (ab/gw/ui_cmd). reset_filter is health.py's and test_notify discord.py's."""
+        cmd = msg.get("cmd")
+        if cmd == "confirm_present":
             with self._lock:
                 self.present_confirmed_at = self.clock()
             log.info("presence confirmed from the %s", msg.get("source", "app"))
+        elif cmd == "reset_fault":
+            self.mqtt.publish(TOPIC_NODE2_CMD, {"seq": self._seq2.next(), "ts": now_ts(), "reset_fault": True,
+                                                "charge_allowed": bool(self.charge_allowed),
+                                                "reason": self.charge_reason or "reset_fault"})
+            log.info("reset_fault sent to Node 2")
+        elif cmd == "aim_person":
+            self.aim_now()
+        elif cmd == "survey_now":
+            self.mqtt.publish(TOPIC_VISION_CMD, {"cmd": "survey", "reason": "app"})
+            log.info("survey requested from the app")
+
+    def aim_now(self):
+        """Turn straight to the nearest person the camera sees (button on the dashboard). Returns the target."""
+        now = self.clock()
+        with self._lock:
+            vision = self._fresh(self.vision, now, self.c["vision_stale_s"])
+            node1 = self._fresh(self.node1, now)
+        persons = (vision or {}).get("persons") or []
+        if not persons or not node1:
+            log.info("aim_person: nobody in view")
+            return None
+        p = persons[0]
+        pan = clamp(float(node1.get("pan_deg") or 0.0) + float(p.get("pan_err_deg") or 0.0), -PAN_LIMIT, PAN_LIMIT)
+        tilt = clamp(float(node1.get("tilt_deg") or 0.0) + float(p.get("tilt_err_deg") or 0.0),
+                     -TILT_LIMIT, TILT_LIMIT)
+        self.target = {"pan_deg": round(pan, 1), "tilt_deg": round(tilt, 1)}
+        self._cmd1({"cmd": "aim", "pan_deg": self.target["pan_deg"], "tilt_deg": self.target["tilt_deg"]})
+        self.stats["aim_cmds"] += 1
+        return self.target
 
     # --- helpers ---
 
