@@ -2,6 +2,7 @@
 # jetson-inference (detectNet) is built from source on the Jetson, not installed from pip.
 paho-mqtt==1.6.1
 pyserial==3.5
+smbus2==0.4.3
 PyYAML==5.4.1
 requests==2.27.1
 pytest==7.0.1

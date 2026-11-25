@@ -139,3 +139,11 @@ notify:
     photo_max_age_s: 900
     max_attempts: 5
     unit_name: AirRaiKorDee
+
+# --- sensors/bme280_reader.py: BME280 on the Jetson I2C bus -> ab/gw/env (AIR-12) ---
+bme280:
+  bus: 1                            # header pins 3 (SDA) / 5 (SCL)
+  address: 0x76                     # 0x77 if SDO is tied high; check with `sudo i2cdetect -y -r 1`
+  period_s: 2
+  retry_s: 10                       # reopen the bus after this long of I2C errors
+  temp_offset_c: 0.0                # MEASURE: the base gets warm from the Jetson; compare with a thermometer
