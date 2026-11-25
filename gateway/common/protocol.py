@@ -11,6 +11,7 @@ TOPIC_NODE1_TELEMETRY = "ab/node1/telemetry"
 TOPIC_NODE1_EVENT = "ab/node1/event"
 TOPIC_NODE1_CMD = "ab/node1/cmd"
 TOPIC_NODE1_ACK = "ab/node1/ack"
+TOPIC_NODE1_AUDIO = "ab/node1/audio"     # voice clip frames after the wake word (voice/voice.py)
 TOPIC_NODE2_TELEMETRY = "ab/node2/telemetry"
 TOPIC_NODE2_CMD = "ab/node2/cmd"
 TOPIC_NODE2_ACK = "ab/node2/ack"
