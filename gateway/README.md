@@ -59,7 +59,7 @@ Paths and fields follow Farn's data contract (`docs/protocol.md` → "Firebase R
 Everything goes under `devices/<DEVICE_ID>/` with one PATCH per batch. The Jetson signs in as
 `device-<DEVICE_ID>@devices.airraikordee.example`, so `.env` needs `FIREBASE_DB_URL`, `FIREBASE_API_KEY`,
 `DEVICE_ID` and `DEVICE_PASSWORD` (the password comes from Farn privately, never in Git).
-`*/latest` and `state` are overwritten at most every second, `history/node1/<minute>` gets one averaged row per
+`*/latest` and `state` are overwritten at most every 2 s, `history/node1/<minute>` gets one averaged row per
 minute, `health` every 30 s, `cause/latest` and `alerts/<id>` on every event.
 Reading `config` back down is `cloud/config_listener.py` (below).
 

@@ -34,10 +34,10 @@ uploader:
   # Firebase paths and fields: docs/protocol.md "Firebase Realtime Database" (Farn's data contract).
   # Everything goes under devices/<DEVICE_ID>/; the device account and password are in .env.
   rates_s:                          # "latest" paths are overwritten at most this often
-    telemetry/node1/latest: 1
-    telemetry/node2/latest: 1
-    env/latest: 1
-    state: 1
+    telemetry/node1/latest: 2
+    telemetry/node2/latest: 2
+    env/latest: 2
+    state: 2
   health_every_s: 30
   node_offline_s: 30                # node*_online = false after this long without telemetry
 

@@ -43,7 +43,7 @@ def base_args(description):
     load_env()
     p = argparse.ArgumentParser(description=description)
     p.add_argument("--host", default=os.environ.get("MQTT_HOST", "localhost"))
-    p.add_argument("--port", type=int, default=int(os.environ.get("MQTT_PORT", "1883")))
+    p.add_argument("--port", type=int, default=int(os.environ.get("MQTT_PORT", "1884")))
     p.add_argument("--user", default=os.environ.get("MQTT_USER"),
                    help="MQTT username (default: MQTT_USER from .env)")
     p.add_argument("--password", default=os.environ.get("MQTT_PASS"),
