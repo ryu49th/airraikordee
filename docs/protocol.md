@@ -2,7 +2,7 @@
 
 ### Wire format
 
-- **Transport:** MQTT 3.1.1 to the Mosquitto broker on the Jetson, port 1883, username and password from `.env`, keepalive 30 s, clean session. Nodes connect over Wi-Fi (Node 2) or through the UART bridge (Node 1).
+- **Transport:** MQTT 3.1.1 to the Mosquitto broker on the Jetson, port 1884 (the team's user-level broker; `MQTT_PORT` in `.env` wins; the system broker on 1883 needs a login the team does not have), username and password from `.env`, keepalive 30 s, clean session. Nodes connect over Wi-Fi (Node 2) or through the UART bridge (Node 1). The Node 2 firmware example (`node2/include/secrets.example.h`) and the simulators still default to 1883: set the port to 1884.
 - **Payload encoding:** one JSON object per message, UTF-8, compact (no spaces), Thai text written as UTF-8 (not `\uXXXX` escapes). The gateway never sends `NaN` or `Infinity`; a bad reading is `null`. No binary payloads.
 - **QoS and retain:** the gateway publishes with QoS 1 (the vision module with QoS 0), retain off, and subscribes with QoS 1. The simulated nodes publish telemetry with QoS 0 and events and acks with QoS 1. Only `ab/gw/config` is retained (see MQTT additions).
 - **Common fields:** every telemetry and command carries `node_id`, `seq` and `ts`.
@@ -165,15 +165,15 @@ General rules:
 | `telemetry/node2/latest` | uploader | dashboard | overwrite | 1 s | Node 2 record (fields below) |
 | `env/latest` | uploader | dashboard | overwrite | 1 s | last `ab/gw/env` |
 | `state` | uploader | dashboard | overwrite | 1 s | last `ab/gw/state` |
-| `history/node1/{minuteTs}` | uploader | dashboard | PUT | 1 min | 1-minute averages, kept 48 h |
-| `history/node1_m15/{ts}` | uploader | dashboard | PUT | 15 min | 15-minute averages, kept 30 days |
+| `history/node1/{minuteTs}` | uploader | dashboard | PUT | 1 min | 1-minute averages (retention 48 h is planned, nothing deletes old rows yet) |
+| `history/node1_m15/{ts}` | uploader | dashboard | PUT | 15 min | planned, no code yet: 15-minute averages, kept 30 days |
 | `cause/latest` | uploader | dashboard | overwrite | each result | cause record |
-| `cause/history/{id}` | uploader | dashboard | PUT | each result | cause record |
+| `cause/history/{id}` | uploader | dashboard | PUT | each result | planned, no code yet: cause record |
 | `alerts/{key}` | uploader | dashboard | PUT, new key | when an alert starts | alert record |
-| `health` | uploader | dashboard | overwrite | 30 s | health record |
-| `feedback/{push_id}` | owner (dashboard) | uploader | POST | button press | "ไม่ใช่" on a dust cause |
+| `health` | uploader | dashboard | overwrite | 10 s (`uploader.health_every_s`; the code default is 30 s) | health record |
+| `feedback/{push_id}` | owner (dashboard) | uploader | POST | button press | "ไม่ใช่" on a dust cause (the dashboard writes it; no gateway code reads it yet) |
 | `config` | owner (dashboard) | uploader | PATCH | when saved | settings |
-| `ui_cmd/{push_id}` | owner (dashboard) | uploader | POST | button press | one-shot command |
+| `ui_cmd/{push_id}` | owner (dashboard) | uploader | POST | button press | one-shot command (planned: no dashboard button and no gateway code yet) |
 
 
 Outside `devices/`:
@@ -203,14 +203,14 @@ Two kinds of Firebase Auth account sign in:
 
 The rules do not look at how an owner signs in. They check that `users/(uid)/devices/(deviceId)` exists for the signed-in `uid`. A device account is recognised by its email.
 
-Rules (`dashboard/database.rules.json`):
+Rules (`dashboard/database.rules.json`; this file is not in the repo yet, it lives in Farn's card AIR-49 and is added when he publishes the rules):
 - Device account: writes the paths the uploader writes, and reads its own unit, including `config`, `ui_cmd`, `feedback` and `deviceSecrets/(deviceId)`.
 - Owner who claimed the unit: reads everything under `devices/(deviceId)/`; writes `config` and `feedback`; creates `ui_cmd` entries (cannot change an existing one; `by` must be the owner's `uid`; `cmd` must be one of the names below); writes `deviceSecrets/(deviceId)/(channel)`, whose value must start with `https://discord.com/api/webhooks/` and be at most 300 characters.
 - Another unit's account, another owner, and anyone signed out read nothing (E5).
 
 The Jetson refreshes its 1-hour ID token before it expires and retries once after HTTP 401. The dashboard signs in, reads `users/(uid)/devices` to find its deviceId, then listens to the smallest branch each screen needs.
 
-The uploader polls `config`, `ui_cmd` and `feedback` every 3 s, so a change on the web reaches the unit within a few seconds. It skips `feedback` keys it has already copied.
+`cloud/config_listener.py` (PR #5) polls `config` every `config_listener.poll_s` = 5 s (AIR-97 asks for 5 to 10 s), so a change on the web reaches the unit within about 5 s; it keeps the last good settings if Firebase is unreachable. Polling `ui_cmd` and `feedback` (every 3 s, skipping `feedback` keys already copied) is planned: no code reads them yet.
 
 ### Records
 
@@ -383,7 +383,7 @@ interface HealthRecord {   // no `ts`: the uploader writes none (PR #4 relies on
 }
 ```
 - `health.py` publishes `ts`, `node*_online`, `node*_last_seen`, `cpu_temp_c`, `ram_pct`, `disk_pct`, `filter_hours`, `pms_hours` and `fan_rpm_ratio` on `ab/gw/health`. The uploader copies `node*_online`, `cpu_temp_c`, `filter_hours` and `pms_hours` and adds `pending_rows` and `last_upload_ts`; the rest is not forwarded yet (PR #6 vs PR #8).
-- `node*_online` follows `health.py` (offline after 30 s without data). `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min". The `node_offline` alert fires at the same moment `node*_online` turns false (30 s), never later.
+- `node*_online` follows `health.py` (`health.node_offline_s` = 30 s without data). `health.py` only sets the flag: no module sends the `node_offline` alert yet (planned; the PR #8 bridge test says it is `health.py`'s job). `node*_last_seen` is the unix time of the last message from that node, so the dashboard can say "Node 2 offline for 3 min". The `node_offline` alert fires at the same moment `node*_online` turns false (30 s), never later.
 - `fan_rpm_ratio` is the RPM now divided by the RPM with a fresh filter at the same `fan_pct`. A falling ratio means the filter is clogging.
 - The dashboard shows the whole unit as offline when `telemetry/node1/latest.ts` is older than 90 s (the gateway-silent rule below; PR #4 reads this path).
 
@@ -419,26 +419,26 @@ interface HistoryRow {
   }
 }
 ```
-Charts read: 1 h = `limitToLast(60)` of `history/node1`, 24 h = `limitToLast(1440)` of `history/node1` (needs 24 h of 1-minute rows), 7 d = `limitToLast(672)` of `history/node1_m15`. After an outage there are gaps, so a chart that must end exactly at "now − window" uses `orderByKey().startAt(String(fromSec))` instead. The uploader deletes keys older than the retention (48 h for 1 min, 30 days for 15 min) once a day. A 1-minute row older than 48 h survives only inside its 15-minute average.
+Charts read: 1 h = `limitToLast(60)` of `history/node1`, 24 h = `limitToLast(1440)`, 7 d = `limitToLast(10080)` of `history/node1` (what PR #4 does today; it downloads about 10k rows, so the 15-minute history below is the planned fix: 7 d = `limitToLast(672)` of `history/node1_m15`). After an outage there are gaps, so a chart that must end exactly at "now − window" uses `orderByKey().startAt(String(fromSec))` instead. Planned, no code yet: the uploader deletes keys older than the retention (48 h for 1 min, 30 days for 15 min) once a day, and a 1-minute row older than 48 h survives only inside its 15-minute average.
 
-**`config`** (written by the owner, used by `decision.py`; a missing or invalid field falls back to `config.yaml`):
+**`config`** (written by the owner). `config_listener.py` applies six fields today (`pm_alert`, `night_start`, `night_end`, `fan_mode`, `manual_fan_pct`, `filter_reset_ts`) and republishes them on `ab/gw/config`; a missing or invalid field falls back to `config.yaml`. The other fields below are planned (they need `decision.py`, which does not exist yet):
 ```ts
 interface Config {
-  pm_alert: integer;                 // µg/m³
-  pm_alert_min: integer;             // minutes
-  alert_cooldown_min: integer;
-  night_enabled: boolean;
-  night_start: string;              // "HH:MM"
-  night_end: string;                // "HH:MM"
-  night_fan_max_pct: integer;
+  pm_alert: integer;                 // µg/m³, 5 to 500; default 35 (`decision.pm_alert` in config.yaml; the gateway spec text still says 55)
+  pm_alert_min: integer;             // minutes (planned)
+  alert_cooldown_min: integer;       // planned
+  night_enabled: boolean;            // planned
+  night_start: string;              // "HH:MM", default 22:00
+  night_end: string;                // "HH:MM", default 06:00
+  night_fan_max_pct: integer;       // planned (config.yaml calls it night_fan_max: 35)
   manual_fan_pct: integer | null;    // 0 to 100
   fan_mode: "auto" | "manual";
-  fan_table: [pm25_upper: integer, fan_pct: integer][];
-  field_test: boolean;
+  fan_table: [pm25_upper: integer, fan_pct: integer][];   // planned
+  field_test: boolean;              // planned
   filter_reset_ts: unix_seconds;
   updated_ts: unix_seconds;
   updated_by: string;               // uid
-  notify?: Record<string, NotifyChannel>;
+  notify?: Record<string, NotifyChannel>;   // planned
 }
 ```
 ```json
@@ -452,7 +452,7 @@ interface Config {
   "night_fan_max_pct": 35,
   "manual_fan_pct": null,
   "fan_mode": "auto",
-  "fan_table": [[15, 25], [35, 45], [55, 70], [9999, 100]],
+  "fan_table": [[15, 25], [35, 45], [55, 70], [100000, 100]],
   "field_test": false,
   "filter_reset_ts": 1730000000,
   "updated_ts": 1794383760,
@@ -552,9 +552,9 @@ These add to the MQTT table above and leave it unchanged.
 3. **`ab/gw/cause` + `id`, `source`.** `source` ∈ `rules` · `cloud`. `id` links the "ไม่ใช่" feedback to one result.
 4. **`ab/gw/state.alerts[]` item** = `StateAlert` (types in the table above).
 5. **`ab/gw/health`**, every 10 s: `HealthRecord` without `pending_rows` and `last_upload_ts` (the uploader adds those and sets `ts`).
-6. **`ab/gw/config`** (retained): the uploader publishes the current `config` so `decision.py` gets web changes.
-7. **`ab/gw/ui_cmd`**: the uploader publishes each `ui_cmd` record; `decision.py` / `health.py` act on it.
-8. **`ab/node2/cmd` + optional `field_test`, `reset_fault`**, so the web settings and buttons reach the box:
+6. **`ab/gw/config`** (retained): `config_listener.py` publishes the settings in use (QoS 1, retained) so `decision.py` / `health.py` get web changes.
+7. **`ab/gw/ui_cmd`** *(planned, no code yet)*: the uploader publishes each `ui_cmd` record; `decision.py` / `health.py` act on it.
+8. **`ab/node2/cmd` + optional `field_test`, `reset_fault`**, so the web settings and buttons reach the box (only the Node 2 simulator handles them today):
    ```ts
    type Node2CmdExtra = { field_test?: boolean; reset_fault?: boolean };   // sent with Node2Cmd
    ```
