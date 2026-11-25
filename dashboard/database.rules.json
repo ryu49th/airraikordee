@@ -4,7 +4,13 @@
     ".write": false,
 
     "users": {
+      ".indexOn": ["linkcode"],   // the LINE bot finds a user by the code shown in the dashboard
       "$uid": {
+        "linkcode": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isString() && newData.val().length <= 64"
+        },
         "devices": {
           ".read": "auth != null && auth.uid === $uid",
           "$deviceId": {
@@ -95,6 +101,7 @@
 
         "history": {
           "$series": {
+            ".indexOn": ["ts"],
             "$key": {
               ".write": "auth != null && auth.token.email === 'device-' + $deviceId + '@devices.airraikordee.example'",
               "ts": { ".validate": "newData.isNumber()" },

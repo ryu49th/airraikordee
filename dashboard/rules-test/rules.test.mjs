@@ -93,3 +93,18 @@ test("deviceSecrets: wrong prefix denied", () => assertFails(set(ref(owner(), `d
 test("deviceSecrets: stranger cannot write", () => assertFails(set(ref(stranger(), `deviceSecrets/${DEV}/discord`), "https://discord.com/api/webhooks/1/a")));
 test("deviceSecrets: own device reads", () => assertSucceeds(get(ref(device(), `deviceSecrets/${DEV}/discord`))));
 test("deviceSecrets: other unit's device denied", () => assertFails(get(ref(env.authenticatedContext("d2", { email: `device-${OTHER}@devices.airraikordee.example` }).database(), `deviceSecrets/${DEV}/discord`))));
+
+// LINE linking (live rules had this before the repo file did)
+test("owner writes and reads own link code", async () => {
+  await assertSucceeds(set(ref(owner(), "users/owner1/linkcode"), "K7Q2M9"));
+  await assertSucceeds(get(ref(owner(), "users/owner1/linkcode")));
+});
+test("another user cannot write or read someone else's link code", async () => {
+  await assertFails(set(ref(stranger(), "users/owner1/linkcode"), "XXXXXX"));
+  await assertFails(get(ref(stranger(), "users/owner1/linkcode")));
+});
+test("link code must be a short string", async () => {
+  await assertFails(set(ref(owner(), "users/owner1/linkcode"), 12345));
+  await assertFails(set(ref(owner(), "users/owner1/linkcode"), "x".repeat(65)));
+});
+test("signed-out cannot touch link codes", () => assertFails(set(ref(anon(), "users/owner1/linkcode"), "K7Q2M9")));
