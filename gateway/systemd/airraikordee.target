@@ -1,0 +1,8 @@
+# Starts every enabled airraikordee@*.service at boot:  systemctl restart airraikordee.target
+[Unit]
+Description=AirRaiKorDee gateway (all modules)
+After=network-online.target
+Wants=network-online.target
+
+[Install]
+WantedBy=multi-user.target

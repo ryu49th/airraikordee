@@ -1,0 +1,25 @@
+# One template unit for every gateway module: airraikordee@<python module>.service
+# e.g. airraikordee@bridge.uart_bridge.service runs `python3 -m bridge.uart_bridge` from the gateway folder.
+# install.sh fills in @USER@ and @GATEWAY_DIR@ and copies this to /etc/systemd/system/.
+[Unit]
+Description=AirRaiKorDee gateway module %i
+After=network-online.target
+Wants=network-online.target
+PartOf=airraikordee.target
+# keep restarting forever (a module that crashes in a loop still logs why)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@GATEWAY_DIR@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m %i
+Restart=always
+RestartSec=3
+# the modules stop cleanly on SIGTERM (common/service.py)
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=airraikordee.target
